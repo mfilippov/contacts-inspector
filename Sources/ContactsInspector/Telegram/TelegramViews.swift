@@ -61,6 +61,26 @@ struct TelegramView: View {
             Text(names + (users.count > 10 ? "\n… и ещё \(users.count - 10)" : "")
                  + "\n\nЧаты и переписка останутся. Копия контактов сохранится в истории.")
         }
+        .alert(createTitle, isPresented: Binding(get: { tg.pendingCreate != nil },
+                                                 set: { if !$0 { tg.pendingCreate = nil } }),
+               presenting: tg.pendingCreate) { users in
+            Button("Создать") {
+                Task {
+                    var sources: [TGImportSource] = []
+                    for u in users { sources.append(await tg.importSource(for: u)) }
+                    let ids = await model.createFromTelegram(sources)
+                    tg.resultMessage = "Создано контактов в Apple: \(ids.count)"
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: { users in
+            let suggested = users.filter { u in
+                model.contacts.contains { if case .suggested(let s) = model.matcher.status($0.record) { s.id == u.id } else { false } }
+            }.count
+            Text(users.prefix(10).map(\.name).joined(separator: "\n") + (users.count > 10 ? "\n… и ещё \(users.count - 10)" : "")
+                 + "\n\nИмя, телефон, фото, день рождения и связь с Telegram. Аккаунт — по умолчанию (iCloud)."
+                 + (suggested > 0 ? "\n\n⚠️ Для \(suggested) из них уже есть похожий контакт Apple (совпадает телефон) — возможно, лучше связать." : ""))
+        }
         .alert("Telegram", isPresented: Binding(get: { tg.resultMessage != nil }, set: { if !$0 { tg.resultMessage = nil } })) {
             Button("OK") { tg.resultMessage = nil }
         } message: {
@@ -146,9 +166,84 @@ extension TelegramView {
         guard let p = tg.pendingAutoDelete else { return "" }
         return p.seconds == 0 ? "Выключить автоудаление?" : "Автоудаление: \(TGChatInfo.describeAutoDelete(p.seconds))?"
     }
+    var createTitle: String {
+        let n = tg.pendingCreate?.count ?? 0
+        return n == 1 ? "Создать контакт в Apple?" : "Создать контакты в Apple (\(n))?"
+    }
     var removeTitle: String {
         let n = tg.pendingRemove?.count ?? 0
         return n == 1 ? "Удалить контакт из Telegram?" : "Удалить из Telegram контакты (\(n))?"
+    }
+}
+
+/// Окно переноса полей из Telegram в связанный контакт Apple.
+struct TelegramImportSheet: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var tg: TelegramService
+    @Environment(\.dismiss) private var dismiss
+    let contactId: String
+    let user: TGUser
+    @State private var source: TGImportSource?
+    @State private var fields = Set<TGImportField>()
+    @State private var saving = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button("Отмена") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Text("Перенос из Telegram").font(.headline)
+                Spacer()
+                Button("Перенести") {
+                    guard let source else { return }
+                    saving = true
+                    Task {
+                        await model.importFromTelegram(contactId: contactId, fields: fields, source: source)
+                        dismiss()
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(source == nil || fields.isEmpty || saving)
+            }
+            .padding()
+            Divider()
+            if let source, let r = model.contact(contactId)?.record {
+                Form {
+                    Section {
+                        LabeledContent("Telegram", value: user.name)
+                        LabeledContent("Контакт Apple", value: r.displayName)
+                    }
+                    Section("Что перенести") {
+                        ForEach(TGImportField.allCases) { f in
+                            let tgValue = source.value(f)
+                            Toggle(isOn: Binding(get: { fields.contains(f) },
+                                                 set: { if $0 { fields.insert(f) } else { fields.remove(f) } })) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(f.title)
+                                    Text("Telegram: \(tgValue.isEmpty ? "—" : tgValue)").font(.caption)
+                                    Text("Сейчас: \(TelegramImport.appleValue(f, r, source: source).isEmpty ? "—" : TelegramImport.appleValue(f, r, source: source))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(tgValue.isEmpty)
+                        }
+                    }
+                    Section {
+                        Text("Связь с Telegram (ID, username, ссылка) прописывается всегда. Копия контакта до изменения сохранится в истории.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .formStyle(.grouped)
+            } else {
+                ProgressView("Загружаю данные из Telegram…").frame(maxHeight: .infinity)
+            }
+        }
+        .frame(width: 520, height: 560)
+        .task {
+            let s = await tg.importSource(for: user)
+            source = s
+            if let r = model.contact(contactId)?.record { fields = TelegramImport.defaultFields(r, source: s) }
+        }
     }
 }
 
@@ -323,6 +418,12 @@ private struct TelegramContactsTable: View {
                 }
                 Divider()
                 AutoDeleteMenuItems(userIds: Array(ids))
+                let unlinked = tg.users.filter { ids.contains($0.id) && model.matcher.appleContacts(for: $0).isEmpty }
+                if !unlinked.isEmpty {
+                    Button(unlinked.count > 1 ? "Создать контакты в Apple (\(unlinked.count))…" : "Создать контакт в Apple…") {
+                        tg.pendingCreate = unlinked
+                    }
+                }
                 Button(ids.count > 1 ? "Удалить из контактов Telegram (\(ids.count))…" : "Удалить из контактов Telegram…",
                        role: .destructive) {
                     tg.pendingRemove = tg.users.filter { ids.contains($0.id) }
@@ -413,6 +514,7 @@ struct TelegramContactCard: View {
     @State private var full: TGFullInfo?
     @State private var bigPhoto: String?
     @State private var picking = false
+    @State private var importInto: String?
 
     var body: some View {
         let m = model.matcher
@@ -489,8 +591,11 @@ struct TelegramContactCard: View {
                             Button("Показать") { model.filter = .all; model.search = ""; model.tableSelection = [id] }
                         }
                     }
-                    Button("Отвязать", role: .destructive) {
-                        Task { await model.setTelegramLinks(linked.map { ($0, nil) }) }
+                    HStack {
+                        Button("Перенести из Telegram…") { importInto = linked[0] }
+                        Button("Отвязать", role: .destructive) {
+                            Task { await model.setTelegramLinks(linked.map { ($0, nil) }) }
+                        }
                     }
                 } else if let s = suggested {
                     Text("Найден по телефону: \(s.record.displayName)").foregroundStyle(.orange)
@@ -500,7 +605,15 @@ struct TelegramContactCard: View {
                     }
                 } else {
                     LabeledContent("Не связан") {
-                        Button("Связать…") { picking = true }
+                        HStack {
+                            Button("Связать…") { picking = true }
+                            Button("Создать контакт") {
+                                Task {
+                                    let ids = await model.createFromTelegram([await tg.importSource(for: user)])
+                                    if !ids.isEmpty { tg.resultMessage = "Контакт «\(user.name)» создан в Apple Контактах." }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -515,8 +628,13 @@ struct TelegramContactCard: View {
                 Task { await model.setTelegramLinks([(id, user)]) }
             }
         }
+        .sheet(item: Binding(get: { importInto.map { ImportTarget(id: $0) } }, set: { importInto = $0?.id })) { t in
+            TelegramImportSheet(contactId: t.id, user: user)
+        }
     }
 }
+
+struct ImportTarget: Identifiable { let id: String }
 
 private struct AppleLinkCell: View {
     let row: TGRow

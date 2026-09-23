@@ -523,6 +523,7 @@ struct TelegramCardSection: View {
     @EnvironmentObject var tg: TelegramService
     let contact: AppContact
     @State private var picking = false
+    @State private var importFrom: TGUser?
 
     var body: some View {
         let status = model.matcher.status(contact.record)
@@ -539,6 +540,9 @@ struct TelegramCardSection: View {
                     Text("Этого пользователя нет в ваших контактах Telegram.").font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
+                    if let user {
+                        Button("Перенести из Telegram…") { importFrom = user }
+                    }
                     if let user, outdated {
                         Button("Обновить ник") { Task { await model.setTelegramLinks([(contact.id, user)]) } }
                     }
@@ -569,6 +573,9 @@ struct TelegramCardSection: View {
             TelegramUserPicker(title: "Связать «\(contact.record.displayName)» с Telegram") { u in
                 Task { await model.setTelegramLinks([(contact.id, u)]) }
             }
+        }
+        .sheet(item: $importFrom) { u in
+            TelegramImportSheet(contactId: contact.id, user: u)
         }
     }
 }

@@ -235,6 +235,48 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Переносит выбранные поля из Telegram в контакт Apple (и прописывает связь).
+    func importFromTelegram(contactId: String, fields: Set<TGImportField>, source: TGImportSource) async {
+        guard let c = cnById[contactId] else { errorMessage = "Контакт не найден — обновите список"; return }
+        do {
+            try archive([c], action: "telegram-import")
+            let req = CNSaveRequest()
+            req.update(TelegramImport.apply(fields, from: source, to: c))
+            try store.execute(req)
+            if fields.contains(.bio), let bio = source.full?.bio, !bio.isEmpty {
+                let note = TelegramImport.mergedNote(existing: contact(contactId)?.record.note, bio: bio)
+                try setNoteViaAppleScript(contactId: contactId, note: note)
+            }
+            debugLog("telegram import into \(contactId): \(fields.map(\.rawValue).sorted())")
+            await load(silent: true)
+        } catch {
+            errorMessage = "Не удалось перенести данные: \(error)"
+        }
+    }
+
+    /// Создаёт контакты Apple (в аккаунте по умолчанию) из пользователей Telegram. Возвращает их id.
+    @discardableResult
+    func createFromTelegram(_ sources: [TGImportSource]) async -> [String] {
+        guard !sources.isEmpty else { return [] }
+        do {
+            let req = CNSaveRequest()
+            let created = sources.map { TelegramImport.makeContact(from: $0) }
+            for m in created { req.add(m, toContainerWithIdentifier: nil) }
+            try store.execute(req)
+            let ids = created.map(\.identifier)
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+            let stamp = fmt.string(from: Date())
+            appendHistory(zip(sources, ids).map { "\(stamp)\tcreate-from-telegram\t\($0.user.name)\t\($1)" })
+            debugLog("created from telegram: \(ids.count)")
+            await load(silent: true)
+            return ids
+        } catch {
+            errorMessage = "Не удалось создать контакты: \(error)"
+            return []
+        }
+    }
+
     /// Удаляет контакты из Telegram; перед этим сохраняет их в историю (JSON, vCard, фото).
     func deleteTelegramContacts(_ users: [TGUser]) async {
         guard let telegram, !users.isEmpty else { return }

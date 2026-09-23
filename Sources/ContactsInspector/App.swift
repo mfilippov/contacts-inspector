@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
         }
+        AppAppearance.current.apply()
         DebugTools.shared.installIfEnabled()
     }
 
@@ -49,5 +50,9 @@ struct ContactsInspectorApp: App {
                 }
         }
         .defaultSize(width: 1500, height: 900)
+
+        Settings {
+            SettingsView()
+        }
     }
 }

@@ -399,10 +399,14 @@ final class TelegramService: ObservableObject {
         do {
             let f = try await client.getUserFullInfo(userId: userId)
             var birth = ""
+            var comps: DateComponents?
             if let b = f.birthdate {
                 birth = String(format: "%02d.%02d", b.day, b.month) + (b.year > 0 ? ".\(b.year)" : "")
+                var d = DateComponents(); d.day = b.day; d.month = b.month
+                if b.year > 0 { d.year = b.year }
+                comps = d
             }
-            let info = TGFullInfo(bio: f.bio?.text ?? "", birthdate: birth, note: f.note?.text ?? "",
+            let info = TGFullInfo(bio: f.bio?.text ?? "", birthdate: birth, birthday: comps, note: f.note?.text ?? "",
                                   groupsInCommon: f.groupInCommonCount)
             fullInfoCache[userId] = info
             return info
@@ -410,6 +414,21 @@ final class TelegramService: ObservableObject {
             debugLog("telegram full info failed: \(Self.describe(error))")
             return nil
         }
+    }
+
+    /// Всё, что нужно для переноса в Apple: полная информация и крупное фото.
+    func importSource(for u: TGUser) async -> TGImportSource {
+        TGImportSource(user: u, full: await fullInfo(u.id), photo: await bigPhotoData(u))
+    }
+
+    @Published var pendingCreate: [TGUser]? {
+        didSet { if let p = pendingCreate { debugLog("confirm create from telegram \(p.count)") } }
+    }
+
+    /// Данные крупного фото (для переноса в контакт Apple).
+    func bigPhotoData(_ u: TGUser) async -> Data? {
+        if let path = await bigPhoto(u), let data = try? Data(contentsOf: URL(fileURLWithPath: path)) { return data }
+        return u.photoPath.flatMap { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
     }
 
     /// Крупное фото для карточки: путь к файлу после загрузки.

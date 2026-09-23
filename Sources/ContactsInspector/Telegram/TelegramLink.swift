@@ -24,6 +24,7 @@ struct TGUser: Identifiable, Hashable {
 struct TGFullInfo: Equatable {
     var bio: String
     var birthdate: String
+    var birthday: DateComponents? = nil   // день/месяц, год — если открыт
     var note: String            // ваша заметка о контакте
     var groupsInCommon: Int
 }
