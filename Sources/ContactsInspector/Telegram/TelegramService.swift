@@ -54,6 +54,14 @@ struct TelegramConfig: Codable {
         SecItemDelete(query as CFDictionary)
     }
 
+    /// Ключи, встроенные в сборку (build-app.sh берёт их из telegram-api.env).
+    static func bundledCredentials() -> (apiId: Int, apiHash: String)? {
+        let info = Bundle.main.infoDictionary ?? [:]
+        guard let id = info["TelegramApiId"] as? Int, let hash = info["TelegramApiHash"] as? String,
+              id > 0, !hash.isEmpty else { return nil }
+        return (id, hash)
+    }
+
     static func randomKey() -> Data {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
@@ -66,6 +74,7 @@ enum TGAuth: Equatable {
     case signedOut          // клиент не запущен
     case starting
     case waitPhone
+    case waitQR(String)     // ссылка tg://login?token=… для QR-кода
     case waitCode(String)   // описание, куда отправлен код
     case waitPassword(String)  // подсказка к паролю
     case unsupported(String)   // шаги входа, которые приложение не поддерживает
@@ -86,7 +95,13 @@ final class TelegramService: ObservableObject {
     private var config: TelegramConfig?
 
     init() {
-        config = TelegramConfig.load()
+        var c = TelegramConfig.load()
+        if let b = TelegramConfig.bundledCredentials(), c?.apiId != b.apiId || c?.apiHash != b.apiHash {
+            // Ключи встроены в приложение — пользователю вводить их не нужно.
+            c = TelegramConfig(apiId: b.apiId, apiHash: b.apiHash, databaseKey: c?.databaseKey ?? TelegramConfig.randomKey())
+            do { try c?.save() } catch { debugLog("telegram config save: \(error)") }
+        }
+        config = c
         auth = config == nil ? .notConfigured : .signedOut
     }
 
@@ -119,6 +134,11 @@ final class TelegramService: ObservableObject {
 
     // MARK: - Вход
 
+    /// Вход по QR-коду: сканируется в Telegram на телефоне (Настройки → Устройства → Подключить устройство).
+    func requestQR() {
+        guard auth == .waitPhone else { return }   // не запрашиваем повторно
+        run { try await $0.requestQrCodeAuthentication(otherUserIds: nil) }
+    }
     func submitPhone(_ phone: String) { run { try await $0.setAuthenticationPhoneNumber(phoneNumber: phone, settings: nil) } }
     func submitCode(_ code: String) { run { try await $0.checkAuthenticationCode(code: code) } }
     func submitPassword(_ pwd: String) { run { try await $0.checkAuthenticationPassword(password: pwd) } }
@@ -175,8 +195,10 @@ final class TelegramService: ObservableObject {
             auth = .unsupported("Telegram просит подтвердить email — сделайте это в официальном клиенте и попробуйте снова.")
         case .authorizationStateWaitRegistration:
             auth = .unsupported("Для этого номера нет аккаунта Telegram.")
-        case .authorizationStateWaitOtherDeviceConfirmation, .authorizationStateWaitPremiumPurchase:
-            auth = .unsupported("Этот способ входа не поддерживается. Попробуйте позже.")
+        case .authorizationStateWaitOtherDeviceConfirmation(let s):
+            auth = .waitQR(s.link)
+        case .authorizationStateWaitPremiumPurchase:
+            auth = .unsupported("Telegram требует Premium для входа с этого номера. Попробуйте вход по QR-коду.")
         }
     }
 

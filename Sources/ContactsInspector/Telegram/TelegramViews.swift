@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import SwiftUI
 
 /// Раздел «Telegram»: вход и таблица контактов Telegram со связями с Apple.
@@ -24,8 +25,9 @@ struct TelegramView: View {
             case .starting, .loggingOut:
                 ProgressView(tg.auth == .starting ? "Подключаюсь к Telegram…" : "Выхожу…")
             case .waitPhone:
-                TelegramStep(title: "Номер телефона", prompt: "+7 900 000-00-00",
-                             note: "Номер аккаунта Telegram в международном формате.") { tg.submitPhone($0) }
+                TelegramLoginChoice()
+            case .waitQR(let link):
+                TelegramQRView(link: link)
             case .waitCode(let info):
                 TelegramStep(title: "Код подтверждения", prompt: "12345", note: info) { tg.submitCode($0) }
             case .waitPassword(let hint):
@@ -45,6 +47,73 @@ struct TelegramView: View {
     }
 }
 
+/// Ожидание номера: сразу запрашиваем QR-код — это основной способ входа.
+private struct TelegramLoginChoice: View {
+    @EnvironmentObject var tg: TelegramService
+
+    var body: some View {
+        ProgressView("Готовлю QR-код…")
+            .task { tg.requestQR() }
+    }
+}
+
+/// Вход по номеру телефона — запасной вариант под QR-кодом.
+private struct PhoneLoginSection: View {
+    @EnvironmentObject var tg: TelegramService
+    @State private var expanded = false
+    @State private var phone = ""
+
+    var body: some View {
+        DisclosureGroup("Войти по номеру телефона", isExpanded: $expanded) {
+            HStack {
+                TextField("+7 900 000-00-00", text: $phone).onSubmit(send).frame(width: 200)
+                Button("Получить код", action: send).disabled(phone.trimmed.isEmpty)
+            }
+            .padding(.top, 6)
+        }
+        .frame(width: 320)
+    }
+
+    private func send() {
+        guard !phone.trimmed.isEmpty else { return }
+        tg.submitPhone(phone.trimmed)
+    }
+}
+
+private struct TelegramQRView: View {
+    @EnvironmentObject var tg: TelegramService
+    let link: String
+
+    var body: some View {
+        VStack(spacing: 16) {
+            if let img = qrImage(link) {
+                Image(nsImage: img).interpolation(.none).resizable().frame(width: 240, height: 240)
+                    .padding(12).background(.white, in: RoundedRectangle(cornerRadius: 12))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("1. Откройте Telegram на телефоне")
+                Text("2. Настройки → Устройства → Подключить устройство")
+                Text("3. Наведите камеру на этот код")
+            }
+            Text("Код обновляется автоматически. Если включён облачный пароль, после сканирования приложение его спросит.")
+                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 360)
+            PhoneLoginSection()
+        }
+        .padding()
+    }
+
+    private func qrImage(_ text: String) -> NSImage? {
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(Data(text.utf8), forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let out = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 10, y: 10)) else { return nil }
+        let rep = NSCIImageRep(ciImage: out)
+        let img = NSImage(size: rep.size)
+        img.addRepresentation(rep)
+        return img
+    }
+}
+
 private struct TelegramSetupView: View {
     @EnvironmentObject var tg: TelegramService
     @State private var apiId = ""
@@ -53,7 +122,7 @@ private struct TelegramSetupView: View {
     var body: some View {
         Form {
             Section {
-                Text("Приложение работает с Telegram как отдельный клиент (TDLib). Для этого нужны ваши ключи API — они бесплатные.")
+                Text("В эту сборку не встроены ключи Telegram API. Их можно ввести вручную — они бесплатные.")
                 Link("Открыть my.telegram.org → API development tools", destination: URL(string: "https://my.telegram.org/apps")!)
                 Text("Создайте приложение (название любое, платформа Desktop) и скопируйте App api_id и App api_hash. Ключи хранятся в связке ключей macOS.")
                     .font(.callout).foregroundStyle(.secondary)
