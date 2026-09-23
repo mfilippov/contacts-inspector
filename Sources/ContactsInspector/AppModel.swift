@@ -252,8 +252,14 @@ final class AppModel: ObservableObject {
         Task {
             defer { backupInProgress = false }
             do {
+                var tgUsers: [TGUser]?
+                if let telegram, telegram.auth == .ready {
+                    await telegram.ensurePhotos()
+                    tgUsers = telegram.users
+                }
+                let users = tgUsers
                 let summary = try await Task.detached {
-                    try runBackup(result: result, notes: notes, to: dir)
+                    try runBackup(result: result, notes: notes, telegram: users, to: dir)
                 }.value
                 let now = Date()
                 lastBackup = now

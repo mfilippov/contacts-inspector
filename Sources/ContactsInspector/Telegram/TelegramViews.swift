@@ -204,6 +204,9 @@ private struct TelegramContactsTable: View {
                 if tg.loadingContacts { ProgressView().controlSize(.small) }
                 Spacer()
                 Button { Task { await tg.loadContacts() } } label: { Label("Обновить", systemImage: "arrow.clockwise") }
+                Button { model.backupNow() } label: { Label("Бэкап", systemImage: "externaldrive.badge.plus") }
+                    .disabled(model.backupInProgress)
+                    .help("Полный бэкап: контакты Apple и Telegram")
                 Button { confirmSync = true } label: { Label("Синхронизировать (\(plan.count))", systemImage: "link") }
                     .buttonStyle(.borderedProminent)
                     .disabled(plan.isEmpty)

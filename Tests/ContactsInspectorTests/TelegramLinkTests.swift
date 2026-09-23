@@ -45,3 +45,29 @@ final class TelegramLinkTests: XCTestCase {
         XCTAssertEqual(m.appleContacts(for: users[1]), ["b"])
     }
 }
+
+final class TelegramBackupTests: XCTestCase {
+    func testWritesJsonVcardAndPhotos() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let photo = dir.appendingPathComponent("src.jpg")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]).write(to: photo)
+        let users = [
+            TGUser(id: 42, firstName: "Иван", lastName: "Петров", phone: "79001234567", usernames: ["ivan"],
+                   isMutual: true, photoFileId: 1, photoPath: photo.path),
+            TGUser(id: 7, firstName: "Без", lastName: "Ника", phone: "", usernames: [], isMutual: false),
+        ]
+        let out = dir.appendingPathComponent("telegram")
+        XCTAssertEqual(try writeTelegramBackup(users, to: out), 1)
+        let records = try JSONDecoder().decode([TelegramBackupRecord].self,
+                                               from: Data(contentsOf: out.appendingPathComponent("contacts.json")))
+        XCTAssertEqual(records.map(\.id), [42, 7])
+        XCTAssertEqual(records[0].photoFile, "photos/42.jpg")
+        XCTAssertEqual(records[1].link, "tg://user?id=7")
+        let vcf = try String(contentsOf: out.appendingPathComponent("contacts.vcf"), encoding: .utf8)
+        XCTAssertEqual(vcf.components(separatedBy: "BEGIN:VCARD").count - 1, 2)
+        XCTAssertTrue(vcf.contains("t.me/ivan"))
+        XCTAssertTrue(vcf.contains("PHOTO"))
+    }
+}

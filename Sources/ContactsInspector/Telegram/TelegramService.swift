@@ -172,7 +172,8 @@ final class TelegramService: ObservableObject {
     }
 
     private func handleAuth(_ state: AuthorizationState) {
-        debugLog("telegram auth: \(state)")
+        // Только имя состояния: в параметрах бывают токен QR-входа и данные номера.
+        debugLog("telegram auth: \(String(describing: state).prefix { $0 != "(" })")
         switch state {
         case .authorizationStateWaitTdlibParameters:
             Task { await sendParameters() }
@@ -240,6 +241,31 @@ final class TelegramService: ObservableObject {
             }
         } catch {
             lastError = Self.describe(error)
+        }
+    }
+
+    /// Докачивает маленькие аватарки всех контактов (перед бэкапом). Параллельно, пачками.
+    func ensurePhotos() async {
+        guard let client, auth == .ready else { return }
+        let missing = users.filter { $0.photoFileId != nil && $0.photoPath == nil }
+        guard !missing.isEmpty else { return }
+        debugLog("telegram photos to download: \(missing.count)")
+        for batch in stride(from: 0, to: missing.count, by: 20).map({ Array(missing[$0..<min($0 + 20, missing.count)]) }) {
+            let files = await withTaskGroup(of: (Int64, String?).self) { group in
+                for u in batch {
+                    group.addTask {
+                        let f = try? await client.downloadFile(fileId: u.photoFileId, limit: 0, offset: 0,
+                                                               priority: 16, synchronous: true)
+                        return (u.id, (f?.local.isDownloadingCompleted ?? false) ? f?.local.path : nil)
+                    }
+                }
+                var out: [(Int64, String?)] = []
+                for await r in group { out.append(r) }
+                return out
+            }
+            for (id, path) in files {
+                if let path, let i = users.firstIndex(where: { $0.id == id }) { users[i].photoPath = path }
+            }
         }
     }
 

@@ -7,6 +7,7 @@ struct BackupInfo: Identifiable {
     let date: Date?
     let contacts: Int
     let photos: Int
+    let telegram: Int?
     let bytes: Int64
 
     var name: String { url.lastPathComponent }
@@ -28,6 +29,8 @@ func scanBackups(in dir: URL) -> [BackupInfo] {
             let contacts = vcf.components(separatedBy: "BEGIN:VCARD").count - 1
             let photos = ((try? fm.contentsOfDirectory(atPath: url.appendingPathComponent("photos").path)) ?? [])
                 .filter { $0 != "thumb" && !$0.hasPrefix(".") }.count
+            let tgData = try? Data(contentsOf: url.appendingPathComponent("telegram/contacts.json"))
+            let telegram = tgData.flatMap { try? JSONDecoder().decode([TelegramBackupRecord].self, from: $0) }?.count
             var bytes: Int64 = 0
             if let e = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) {
                 for case let f as URL in e {
@@ -35,7 +38,7 @@ func scanBackups(in dir: URL) -> [BackupInfo] {
                 }
             }
             return BackupInfo(url: url, date: fmt.date(from: stamp), contacts: max(contacts, 0),
-                              photos: photos, bytes: bytes)
+                              photos: photos, telegram: telegram, bytes: bytes)
         }
         .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
 }
@@ -75,6 +78,9 @@ struct BackupsView: View {
                     TableColumn("Дата") { (b: BackupInfo) in Text(b.dateText) }.width(min: 150, ideal: 180)
                     TableColumn("Контактов") { (b: BackupInfo) in Text("\(b.contacts)").monospacedDigit() }.width(80)
                     TableColumn("Фото") { (b: BackupInfo) in Text("\(b.photos)").monospacedDigit() }.width(60)
+                    TableColumn("Telegram") { (b: BackupInfo) in
+                        Text(b.telegram.map(String.init) ?? "—").monospacedDigit().foregroundStyle(b.telegram == nil ? .tertiary : .primary)
+                    }.width(70)
                     TableColumn("Размер") { (b: BackupInfo) in Text(b.sizeText).monospacedDigit() }.width(80)
                     TableColumn("Папка") { (b: BackupInfo) in Text(b.name).foregroundStyle(.secondary) }
                 }

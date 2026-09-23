@@ -7,7 +7,7 @@ import Foundation
 ///   contacts.json       — все поля в структурированном виде (для анализа и diff'ов)
 ///   photos/<id>.<ext>   — оригинальные фото, photos/thumb/<id>.<ext> — миниатюры
 ///   accounts.json       — аккаунты (контейнеры) и группы
-func runBackup(result r: FetchResult, notes: [String: String], to dir: URL) throws -> String {
+func runBackup(result r: FetchResult, notes: [String: String], telegram: [TGUser]?, to dir: URL) throws -> String {
     let fm = FileManager.default
     let photos = dir.appendingPathComponent("photos")
     let thumbs = photos.appendingPathComponent("thumb")
@@ -68,7 +68,62 @@ func runBackup(result r: FetchResult, notes: [String: String], to dir: URL) thro
         })
     try enc.encode(accounts).write(to: dir.appendingPathComponent("accounts.json"))
 
-    return "Контактов: \(r.contacts.count), с фото: \(photoCount)"
+    var summary = "Контактов: \(r.contacts.count), с фото: \(photoCount)"
+    if let telegram {
+        let tgPhotos = try writeTelegramBackup(telegram, to: dir.appendingPathComponent("telegram"))
+        summary += "\nTelegram: \(telegram.count) контактов, с фото: \(tgPhotos)"
+    }
+    return summary
+}
+
+// MARK: - Telegram
+
+/// Запись контакта Telegram в бэкапе.
+struct TelegramBackupRecord: Codable {
+    var id: Int64
+    var firstName, lastName, phone: String
+    var usernames: [String]
+    var isMutual: Bool
+    var link: String
+    var photoFile: String?
+}
+
+/// telegram/contacts.json, telegram/contacts.vcf, telegram/photos/<id>.<ext>. Возвращает число фото.
+func writeTelegramBackup(_ users: [TGUser], to dir: URL) throws -> Int {
+    let photos = dir.appendingPathComponent("photos")
+    try FileManager.default.createDirectory(at: photos, withIntermediateDirectories: true)
+    var records: [TelegramBackupRecord] = []
+    var vcards = ""
+    var photoCount = 0
+    for u in users {
+        var photoFile: String?
+        var imageData: Data?
+        if let path = u.photoPath, let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
+            photoFile = "photos/\(u.id).\(imageExtension(data))"
+            try data.write(to: dir.appendingPathComponent(photoFile!))
+            imageData = data
+            photoCount += 1
+        }
+        records.append(TelegramBackupRecord(id: u.id, firstName: u.firstName, lastName: u.lastName, phone: u.phone,
+                                            usernames: u.usernames, isMutual: u.isMutual, link: u.link,
+                                            photoFile: photoFile))
+        let c = CNMutableContact()
+        c.givenName = u.firstName
+        c.familyName = u.lastName
+        if !u.phone.isEmpty {
+            c.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMobile, value: CNPhoneNumber(stringValue: u.phoneDisplay))]
+        }
+        c.urlAddresses = [CNLabeledValue(label: "Telegram", value: u.link as NSString)]
+        c.socialProfiles = [TelegramLink.profile(for: u)]
+        c.imageData = imageData
+        let vcard = try vcardString(for: c, note: nil)
+        vcards += vcard.hasSuffix("\n") ? vcard : vcard + "\r\n"
+    }
+    let enc = JSONEncoder()
+    enc.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    try enc.encode(records).write(to: dir.appendingPathComponent("contacts.json"))
+    try vcards.write(to: dir.appendingPathComponent("contacts.vcf"), atomically: true, encoding: .utf8)
+    return photoCount
 }
 
 // MARK: - vCard helpers
