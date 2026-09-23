@@ -6,6 +6,8 @@
 	<string>Contacts Inspector</string>
 	<key>CFBundleExecutable</key>
 	<string>ContactsInspector</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>me.filippov.ContactsInspector</string>
 	<key>CFBundleName</key>
