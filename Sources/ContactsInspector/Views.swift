@@ -420,6 +420,7 @@ struct Avatar: View {
 struct ContactDetail: View {
     @EnvironmentObject var model: AppModel
     let contact: AppContact
+    @State private var showPhoto = false
 
     var body: some View {
         let r = contact.record
@@ -429,6 +430,8 @@ struct ContactDetail: View {
             Section {
                 HStack(alignment: .top, spacing: 16) {
                     Avatar(data: contact.image ?? contact.thumbnail, size: 96)
+                        .opensPhoto((contact.image ?? contact.thumbnail).flatMap(NSImage.init(data:)),
+                                    title: r.displayName, isPresented: $showPhoto)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(r.displayName).font(.title2.bold()).textSelection(.enabled)
                         HStack {
@@ -607,5 +610,42 @@ struct TelegramCardSection: View {
         .sheet(item: $importFrom) { u in
             TelegramImportSheet(contactId: contact.id, user: u)
         }
+    }
+}
+
+/// Окно с фото в полном размере (открывается по клику на аватар).
+struct PhotoViewer: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: NSImage
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(title).font(.headline)
+                Spacer()
+                Button("Закрыть") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            .padding(10)
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: min(image.size.width, 800), maxHeight: min(image.size.height, 800))
+                .padding([.horizontal, .bottom], 10)
+                .onTapGesture { dismiss() }
+        }
+        .frame(minWidth: 320, minHeight: 320)
+    }
+}
+
+extension View {
+    /// Клик по аватару открывает фото в полном размере (если оно есть).
+    func opensPhoto(_ image: NSImage?, title: String, isPresented: Binding<Bool>) -> some View {
+        self
+            .onTapGesture { if image != nil { isPresented.wrappedValue = true } }
+            .help(image != nil ? "Открыть фото" : "")
+            .sheet(isPresented: isPresented) {
+                if let image { PhotoViewer(image: image, title: title) }
+            }
     }
 }

@@ -519,6 +519,7 @@ struct TelegramContactCard: View {
     @State private var bigPhoto: String?
     @State private var picking = false
     @State private var importInto: String?
+    @State private var showPhoto = false
 
     var body: some View {
         let m = model.matcher
@@ -530,6 +531,8 @@ struct TelegramContactCard: View {
             Section {
                 HStack(alignment: .top, spacing: 14) {
                     TGAvatar(path: bigPhoto ?? user.photoPath, size: 80)
+                        .opensPhoto((bigPhoto ?? user.photoPath).flatMap(NSImage.init(contentsOfFile:)),
+                                    title: user.name, isPresented: $showPhoto)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(user.name).font(.title2.bold()).textSelection(.enabled)
                         if !user.usernames.isEmpty {
