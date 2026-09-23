@@ -7,6 +7,10 @@ struct EditContactView: View {
     @State private var edit: EditableContact
     @State private var saving = false
 
+    private var birthdayError: String? {
+        do { _ = try EditableContact.parseDate(edit.birthday); return nil } catch { return "\(error)" }
+    }
+
     init(id: String, original: EditableContact) {
         self.id = id
         self.original = original
@@ -27,7 +31,7 @@ struct EditContactView: View {
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)
-                .disabled(edit == original || saving)
+                .disabled(edit == original || saving || birthdayError != nil)
             }
             .padding(10)
             Divider()
@@ -38,7 +42,10 @@ struct EditContactView: View {
                 LabeledListSection(title: "Сайты", kind: .url, items: $edit.urls, addTitle: "Добавить сайт")
                 AddressSection(items: $edit.addresses)
                 Section("День рождения") {
-                    TextField("дд.мм.гггг или дд.мм", text: $edit.birthday)
+                    TextField("Дата", text: $edit.birthday, prompt: Text("дд.мм.гггг или дд.мм"))
+                    if let err = birthdayError {
+                        Text(err).font(.caption).foregroundStyle(.red)
+                    }
                 }
                 LabeledListSection(title: "Связи", kind: .relation, items: $edit.relations, addTitle: "Добавить связь")
                 RemovableSection(title: "Соцпрофили", items: $edit.socials)
@@ -63,28 +70,28 @@ private struct NameSection: View {
 
     var body: some View {
         Section("Имя") {
-            TextField("Префикс", text: $edit.namePrefix)
-            TextField("Имя", text: $edit.givenName)
-            TextField("Отчество", text: $edit.middleName)
-            TextField("Фамилия", text: $edit.familyName)
-            TextField("Девичья фамилия", text: $edit.previousFamilyName)
-            TextField("Суффикс", text: $edit.nameSuffix)
-            TextField("Псевдоним", text: $edit.nickname)
+            TextField("Префикс", text: $edit.namePrefix, prompt: Text("не указано"))
+            TextField("Имя", text: $edit.givenName, prompt: Text("не указано"))
+            TextField("Отчество", text: $edit.middleName, prompt: Text("не указано"))
+            TextField("Фамилия", text: $edit.familyName, prompt: Text("не указано"))
+            TextField("Девичья фамилия", text: $edit.previousFamilyName, prompt: Text("не указано"))
+            TextField("Суффикс", text: $edit.nameSuffix, prompt: Text("не указано"))
+            TextField("Псевдоним", text: $edit.nickname, prompt: Text("не указано"))
         }
         Section("Фонетическое имя") {
-            TextField("Имя", text: $edit.phoneticGivenName)
-            TextField("Отчество", text: $edit.phoneticMiddleName)
-            TextField("Фамилия", text: $edit.phoneticFamilyName)
+            TextField("Имя", text: $edit.phoneticGivenName, prompt: Text("не указано"))
+            TextField("Отчество", text: $edit.phoneticMiddleName, prompt: Text("не указано"))
+            TextField("Фамилия", text: $edit.phoneticFamilyName, prompt: Text("не указано"))
         }
         Section("Работа") {
-            TextField("Организация", text: $edit.organizationName)
-            TextField("Отдел", text: $edit.departmentName)
-            TextField("Должность", text: $edit.jobTitle)
+            TextField("Организация", text: $edit.organizationName, prompt: Text("не указано"))
+            TextField("Отдел", text: $edit.departmentName, prompt: Text("не указано"))
+            TextField("Должность", text: $edit.jobTitle, prompt: Text("не указано"))
         }
     }
 }
 
-/// Выбор метки. Picker, а не Menu: SwiftUI Menu на macOS 27 не открывается.
+/// Выбор метки из стандартных вариантов.
 private struct LabelMenu: View {
     let kind: LabelKind
     @Binding var label: String
