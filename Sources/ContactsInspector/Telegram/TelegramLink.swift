@@ -11,11 +11,48 @@ struct TGUser: Identifiable, Hashable {
     var isMutual: Bool
     var photoFileId: Int?
     var photoPath: String?
+    var bigPhotoFileId: Int? = nil
+    var status: String = ""     // «в сети», «был(а) недавно», дата последнего визита
 
     var name: String { [firstName, lastName].filter { !$0.isEmpty }.joined(separator: " ") }
     var username: String? { usernames.first }
     var phoneDisplay: String { phone.isEmpty ? "" : "+" + phone }
     var link: String { username.map { "https://t.me/\($0)" } ?? "tg://user?id=\(id)" }
+}
+
+/// Полная информация о пользователе (загружается по требованию для карточки).
+struct TGFullInfo: Equatable {
+    var bio: String
+    var birthdate: String
+    var note: String            // ваша заметка о контакте
+    var groupsInCommon: Int
+}
+
+/// Личный чат с пользователем Telegram.
+struct TGChatInfo: Equatable {
+    var chatId: Int64
+    var lists: Set<String> = []      // "main" / "archive" — где чат есть в списке чатов
+    var autoDelete: Int = 0          // таймер автоудаления, секунд (0 — выключен)
+    var lastMessageDate: Date?
+
+    var hasDialog: Bool { !lists.isEmpty }
+    var isArchived: Bool { lists == ["archive"] }
+
+    static func describeAutoDelete(_ seconds: Int) -> String {
+        switch seconds {
+        case 0: return ""
+        case 86_400: return "1 день"
+        case 604_800: return "1 неделя"
+        case 2_678_400: return "1 месяц"
+        case 31_536_000: return "1 год"
+        default:
+            let f = DateComponentsFormatter()
+            f.unitsStyle = .short
+            f.allowedUnits = [.year, .month, .weekOfMonth, .day, .hour, .minute]
+            f.maximumUnitCount = 2
+            return f.string(from: TimeInterval(seconds)) ?? "\(seconds) с"
+        }
+    }
 }
 
 /// Связь контакта Apple с Telegram хранится как соцпрофиль service = "Telegram":

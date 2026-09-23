@@ -178,7 +178,14 @@ struct TGRow: Identifiable {
     let appleIds: [String]
     let appleName: String
     let suggestedId: String?   // контакт Apple, найденный по телефону (если ещё не связан)
+    let chat: TGChatInfo?
     var id: Int64 { user.id }
+    /// Для сортировки: 0 — нет чата, 1 — архив, 2 — есть; затем по дате последнего сообщения.
+    var chatSort: String {
+        guard let c = chat, c.hasDialog else { return "0" }
+        return (c.isArchived ? "1" : "2") + String(Int(c.lastMessageDate?.timeIntervalSince1970 ?? 0))
+    }
+    var autoDelete: Int { chat?.autoDelete ?? 0 }
     var name: String { user.name }
     var phone: String { user.phoneDisplay }
     var username: String { user.username.map { "@\($0)" } ?? "" }
@@ -193,15 +200,16 @@ private struct TelegramContactsTable: View {
     @State private var pickFor: TGUser?
     @State private var confirmSync = false
     @State private var sortOrder = [KeyPathComparator(\TGRow.name)]
+    @State private var showCard = true
 
     var body: some View {
         let rows = makeRows().sorted(using: sortOrder)
         let plan = model.telegramSyncPlan()
         VStack(spacing: 0) {
             HStack {
-                Text("Контактов в Telegram: \(tg.users.count) · связано: \(rows.filter { !$0.appleIds.isEmpty }.count)")
+                Text("Контактов в Telegram: \(tg.users.count) · связано: \(rows.filter { !$0.appleIds.isEmpty }.count) · с чатом: \(rows.filter { $0.chat?.hasDialog == true }.count)")
                     .foregroundStyle(.secondary)
-                if tg.loadingContacts { ProgressView().controlSize(.small) }
+                if tg.loadingContacts || tg.loadingChats { ProgressView().controlSize(.small) }
                 Spacer()
                 Button { Task { await tg.loadContacts() } } label: { Label("Обновить", systemImage: "arrow.clockwise") }
                 Button { model.backupNow() } label: { Label("Бэкап", systemImage: "externaldrive.badge.plus") }
@@ -224,6 +232,11 @@ private struct TelegramContactsTable: View {
                 }.width(min: 80, ideal: 110)
                 TableColumn("Контакт Apple", value: \TGRow.appleName) { (r: TGRow) in AppleLinkCell(row: r) }
                     .width(min: 150, ideal: 220)
+                TableColumn("Чат", value: \TGRow.chatSort) { (r: TGRow) in ChatCell(chat: r.chat) }
+                    .width(min: 80, ideal: 110)
+                TableColumn("Автоудаление", value: \TGRow.autoDelete) { (r: TGRow) in
+                    Text(TGChatInfo.describeAutoDelete(r.autoDelete))
+                }.width(min: 70, ideal: 90)
             }
             .contextMenu(forSelectionType: Int64.self) { ids in
                 if ids.count == 1, let r = rows.first(where: { $0.id == ids.first }) {
@@ -242,6 +255,21 @@ private struct TelegramContactsTable: View {
                 }
             }
             .searchable(text: $search, placement: .toolbar, prompt: "Имя, телефон, username")
+        }
+        .inspector(isPresented: $showCard) {
+            Group {
+                if selection.count == 1, let u = tg.users.first(where: { $0.id == selection.first }) {
+                    TelegramContactCard(user: u).id(u.id)
+                } else {
+                    Text(selection.isEmpty ? "Выберите контакт" : "Выбрано: \(selection.count)").foregroundStyle(.secondary)
+                }
+            }
+            .inspectorColumnWidth(min: 280, ideal: 340, max: 520)
+        }
+        .toolbar {
+            ToolbarItem {
+                Button { showCard.toggle() } label: { Label("Карточка", systemImage: "sidebar.right") }
+            }
         }
         .sheet(item: $pickFor) { user in
             AppleContactPicker(title: "Связать «\(user.name)» с контактом Apple") { id in
@@ -271,7 +299,7 @@ private struct TelegramContactsTable: View {
                 let ids = m.appleContacts(for: u)
                 let name = ids.compactMap { model.contact($0)?.record.displayName }.joined(separator: ", ")
                 return TGRow(user: u, appleIds: ids, appleName: name.isEmpty ? (suggested[u.id].flatMap { model.contact($0)?.record.displayName }.map { "~ " + $0 } ?? "") : name,
-                             suggestedId: suggested[u.id])
+                             suggestedId: suggested[u.id], chat: tg.chats[u.id])
             }
     }
 
@@ -282,6 +310,141 @@ private struct TelegramContactsTable: View {
         var text = "В контакты Apple будет прописан Telegram (ID, username, ссылка):\n\n" + lines.joined(separator: "\n")
         if plan.count > 12 { text += "\n… и ещё \(plan.count - 12)" }
         return text + "\n\nКопии контактов до изменения сохранятся в истории."
+    }
+}
+
+private struct ChatCell: View {
+    let chat: TGChatInfo?
+    var body: some View {
+        if let c = chat, c.hasDialog {
+            HStack(spacing: 4) {
+                Image(systemName: c.isArchived ? "archivebox" : "bubble.left.and.bubble.right")
+                    .foregroundStyle(c.isArchived ? Color.secondary : Color.accentColor)
+                Text(c.lastMessageDate?.formatted(date: .numeric, time: .omitted) ?? "")
+            }
+            .help(c.isArchived ? "Чат в архиве" : "Есть чат")
+        } else {
+            Text("—").foregroundStyle(.tertiary)
+        }
+    }
+}
+
+// MARK: - Карточка контакта Telegram
+
+struct TelegramContactCard: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var tg: TelegramService
+    let user: TGUser
+    @State private var full: TGFullInfo?
+    @State private var bigPhoto: String?
+    @State private var picking = false
+
+    var body: some View {
+        let m = model.matcher
+        let linked = m.appleContacts(for: user)
+        let suggested = model.contacts.first { if case .suggested(let u) = m.status($0.record) { u.id == user.id } else { false } }
+        let chat = tg.chats[user.id]
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 14) {
+                    TGAvatar(path: bigPhoto ?? user.photoPath, size: 96)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(user.name).font(.title2.bold()).textSelection(.enabled)
+                        if !user.usernames.isEmpty {
+                            Text(user.usernames.map { "@\($0)" }.joined(separator: " ")).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Text(user.status).font(.caption).foregroundStyle(.secondary)
+                        Button("Открыть в Telegram") { NSWorkspace.shared.open(URL(string: user.link)!) }
+                            .controlSize(.small)
+                    }
+                }
+
+                CardSection(title: "Контакт", rows: [
+                    ("Телефон", user.phoneDisplay),
+                    ("ID", String(user.id)),
+                    ("Взаимный контакт", user.isMutual ? "да" : "нет"),
+                ])
+
+                if let full {
+                    CardSection(title: "О пользователе", rows: [
+                        ("О себе", full.bio),
+                        ("День рождения", full.birthdate),
+                        ("Ваша заметка", full.note),
+                        ("Общие группы", full.groupsInCommon > 0 ? String(full.groupsInCommon) : ""),
+                    ])
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+
+                CardSection(title: "Чат", rows: chat?.hasDialog == true ? [
+                    ("Статус", chat!.isArchived ? "в архиве" : "в основном списке"),
+                    ("Последнее сообщение", chat!.lastMessageDate?.formatted(date: .abbreviated, time: .shortened) ?? ""),
+                    ("Автоудаление", chat!.autoDelete > 0 ? TGChatInfo.describeAutoDelete(chat!.autoDelete) : "выключено"),
+                ] : [("Статус", tg.loadingChats ? "загружаю чаты…" : "чата нет")])
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Контакт Apple").font(.headline)
+                    if !linked.isEmpty {
+                        ForEach(linked, id: \.self) { id in
+                            HStack {
+                                Avatar(data: model.contact(id)?.thumbnail, size: 22)
+                                Text(model.contact(id)?.record.displayName ?? id)
+                                Spacer()
+                                Button("Показать") { model.filter = .all; model.search = ""; model.tableSelection = [id] }
+                            }
+                        }
+                        Button("Отвязать", role: .destructive) {
+                            Task { await model.setTelegramLinks(linked.map { ($0, nil) }) }
+                        }.controlSize(.small)
+                    } else if let s = suggested {
+                        Text("Найден по телефону: \(s.record.displayName)").foregroundStyle(.orange)
+                        HStack {
+                            Button("Связать") { Task { await model.setTelegramLinks([(s.id, user)]) } }
+                            Button("Другой…") { picking = true }
+                        }.controlSize(.small)
+                    } else {
+                        Text("Не связан").foregroundStyle(.secondary)
+                        Button("Связать с контактом Apple…") { picking = true }.controlSize(.small)
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task {
+            full = await tg.fullInfo(user.id)
+            bigPhoto = await tg.bigPhoto(user)
+        }
+        .sheet(isPresented: $picking) {
+            AppleContactPicker(title: "Связать «\(user.name)» с контактом Apple") { id in
+                Task { await model.setTelegramLinks([(id, user)]) }
+            }
+        }
+    }
+}
+
+/// Секция карточки: показывает только непустые строки.
+private struct CardSection: View {
+    let title: String
+    let rows: [(String, String)]
+
+    var body: some View {
+        let filled = rows.filter { !$0.1.isEmpty }
+        if !filled.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.headline)
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                    ForEach(Array(filled.enumerated()), id: \.offset) { _, row in
+                        GridRow {
+                            Text(row.0).foregroundStyle(.secondary).frame(minWidth: 110, alignment: .leading)
+                            Text(row.1).textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            Divider()
+        }
     }
 }
 

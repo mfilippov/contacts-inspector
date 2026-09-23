@@ -2,6 +2,21 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var telegram: TelegramService?
+
+    /// TDLib нельзя оставлять работающей при exit(): её глобальные объекты C++ разрушаются,
+    /// пока поток TDLibKit ещё вызывает td_json_receive, → SIGSEGV. Поэтому закрываем TDLib штатно
+    /// и завершаемся через _exit, минуя деструкторы C++.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let tg = telegram, tg.tdlibStarted else { return .terminateNow }
+        Task { @MainActor in
+            await tg.shutdown()
+            UserDefaults.standard.synchronize()
+            _exit(0)
+        }
+        return .terminateLater
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Нужно, только если бинарник запущен не из .app (например, swift run)
         if Bundle.main.bundleURL.pathExtension != "app" {
@@ -59,6 +74,7 @@ struct ContactsInspectorApp: App {
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     model.telegram = telegram
+                    delegate.telegram = telegram
                     if model.state == .idle { await model.load() }
                     if telegram.hasSession { telegram.start() }
                 }

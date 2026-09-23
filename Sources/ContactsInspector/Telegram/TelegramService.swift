@@ -87,6 +87,10 @@ final class TelegramService: ObservableObject {
     @Published private(set) var auth: TGAuth
     @Published private(set) var users: [TGUser] = []
     @Published private(set) var loadingContacts = false
+    /// Личные чаты: id пользователя → информация о чате.
+    @Published private(set) var chats: [Int64: TGChatInfo] = [:]
+    @Published private(set) var loadingChats = false
+    private var chatUser: [Int64: Int64] = [:]   // chatId → userId (только личные чаты)
     @Published var lastError: String?
 
     /// Один менеджер на процесс: он держит поток td_receive.
@@ -123,13 +127,27 @@ final class TelegramService: ObservableObject {
         }
     }
 
+    /// TDLib запускалась в этом процессе (нужно штатно закрыть её перед выходом).
+    private(set) var tdlibStarted = false
+
     func start() {
         guard config != nil, client == nil else { return }
+        tdlibStarted = true
         auth = .starting
         client = manager.createClient { [weak self] data, client in
             guard let update = try? client.decoder.decode(Update.self, from: data) else { return }
             Task { @MainActor in self?.handle(update) }
         }
+    }
+
+    /// Штатно закрывает TDLib: `close` и ожидание authorizationStateClosed (не дольше 5 с).
+    func shutdown() async {
+        guard let client else { return }
+        _ = try? await client.close()
+        for _ in 0..<50 where self.client != nil {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        debugLog("telegram shutdown: \(self.client == nil ? "closed" : "timeout")")
     }
 
     // MARK: - Вход
@@ -161,6 +179,25 @@ final class TelegramService: ObservableObject {
                 if nu.photoFileId == users[i].photoFileId { nu.photoPath = nu.photoPath ?? users[i].photoPath }
                 users[i] = nu
             }
+        case .updateNewChat(let u):
+            guard case .chatTypePrivate(let p) = u.chat.type else { return }
+            chatUser[u.chat.id] = p.userId
+            var info = chats[p.userId] ?? TGChatInfo(chatId: u.chat.id)
+            info.autoDelete = u.chat.messageAutoDeleteTime
+            info.lastMessageDate = u.chat.lastMessage.map { Date(timeIntervalSince1970: TimeInterval($0.date)) }
+            for pos in u.chat.positions { Self.apply(pos, to: &info) }
+            chats[p.userId] = info
+        case .updateChatPosition(let u):
+            guard let uid = chatUser[u.chatId], var info = chats[uid] else { return }
+            Self.apply(u.position, to: &info)
+            chats[uid] = info
+        case .updateChatLastMessage(let u):
+            guard let uid = chatUser[u.chatId] else { return }
+            chats[uid]?.lastMessageDate = u.lastMessage.map { Date(timeIntervalSince1970: TimeInterval($0.date)) }
+            for pos in u.positions { if var info = chats[uid] { Self.apply(pos, to: &info); chats[uid] = info } }
+        case .updateChatMessageAutoDeleteTime(let u):
+            guard let uid = chatUser[u.chatId] else { return }
+            chats[uid]?.autoDelete = u.messageAutoDeleteTime
         case .updateFile(let u):
             guard u.file.local.isDownloadingCompleted else { return }
             for i in users.indices where users[i].photoFileId == u.file.id {
@@ -191,6 +228,8 @@ final class TelegramService: ObservableObject {
         case .authorizationStateClosed:
             client = nil
             users = []
+            chats = [:]
+            chatUser = [:]
             auth = config == nil ? .notConfigured : .signedOut
         case .authorizationStateWaitEmailAddress, .authorizationStateWaitEmailCode:
             auth = .unsupported("Telegram просит подтвердить email — сделайте это в официальном клиенте и попробуйте снова.")
@@ -236,12 +275,73 @@ final class TelegramService: ObservableObject {
             for id in ids { result.append(TGUser(try await client.getUser(userId: id))) }
             users = result.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
             debugLog("telegram contacts: \(users.count)")
+            Task { await loadChats() }
             for u in users where u.photoFileId != nil && u.photoPath == nil {
                 _ = try? await client.downloadFile(fileId: u.photoFileId, limit: 0, offset: 0, priority: 1, synchronous: false)
             }
         } catch {
             lastError = Self.describe(error)
         }
+    }
+
+    /// Загружает списки «Основные» и «Архив» целиком; данные чатов приходят обновлениями updateNewChat.
+    func loadChats() async {
+        guard let client, auth == .ready, !loadingChats else { return }
+        loadingChats = true
+        defer { loadingChats = false }
+        for list in [ChatList.chatListMain, .chatListArchive] {
+            while true {
+                do {
+                    _ = try await client.loadChats(chatList: list, limit: 200)
+                } catch let e as TDLibKit.Error where e.code == 404 {
+                    break   // список загружен полностью
+                } catch {
+                    lastError = Self.describe(error)
+                    break
+                }
+            }
+        }
+        debugLog("telegram private chats: \(chats.values.filter(\.hasDialog).count)")
+    }
+
+    private static func apply(_ pos: ChatPosition, to info: inout TGChatInfo) {
+        let key: String
+        switch pos.list {
+        case .chatListMain: key = "main"
+        case .chatListArchive: key = "archive"
+        default: return   // папки не учитываем
+        }
+        if pos.order.rawValue == 0 { info.lists.remove(key) } else { info.lists.insert(key) }
+    }
+
+    // MARK: - Карточка
+
+    private var fullInfoCache: [Int64: TGFullInfo] = [:]
+
+    func fullInfo(_ userId: Int64) async -> TGFullInfo? {
+        if let cached = fullInfoCache[userId] { return cached }
+        guard let client, auth == .ready else { return nil }
+        do {
+            let f = try await client.getUserFullInfo(userId: userId)
+            var birth = ""
+            if let b = f.birthdate {
+                birth = String(format: "%02d.%02d", b.day, b.month) + (b.year > 0 ? ".\(b.year)" : "")
+            }
+            let info = TGFullInfo(bio: f.bio?.text ?? "", birthdate: birth, note: f.note?.text ?? "",
+                                  groupsInCommon: f.groupInCommonCount)
+            fullInfoCache[userId] = info
+            return info
+        } catch {
+            debugLog("telegram full info failed: \(Self.describe(error))")
+            return nil
+        }
+    }
+
+    /// Крупное фото для карточки: путь к файлу после загрузки.
+    func bigPhoto(_ u: TGUser) async -> String? {
+        guard let client, let fid = u.bigPhotoFileId else { return nil }
+        let f = try? await client.downloadFile(fileId: fid, limit: 0, offset: 0, priority: 32, synchronous: true)
+        return (f?.local.isDownloadingCompleted ?? false) ? f?.local.path : nil
     }
 
     /// Докачивает маленькие аватарки всех контактов (перед бэкапом). Параллельно, пачками.
@@ -292,6 +392,21 @@ extension TGUser {
         self.init(id: u.id, firstName: u.firstName, lastName: u.lastName, phone: u.phoneNumber,
                   usernames: u.usernames?.activeUsernames ?? [], isMutual: u.isMutualContact,
                   photoFileId: small?.id,
-                  photoPath: (small?.local.isDownloadingCompleted ?? false) ? small?.local.path : nil)
+                  photoPath: (small?.local.isDownloadingCompleted ?? false) ? small?.local.path : nil,
+                  bigPhotoFileId: u.profilePhoto?.big.id,
+                  status: Self.describe(u.status))
+    }
+
+    private static func describe(_ s: UserStatus) -> String {
+        switch s {
+        case .userStatusOnline: return "в сети"
+        case .userStatusOffline(let o):
+            return "был(а) " + Date(timeIntervalSince1970: TimeInterval(o.wasOnline))
+                .formatted(.relative(presentation: .named))
+        case .userStatusRecently: return "был(а) недавно"
+        case .userStatusLastWeek: return "был(а) на этой неделе"
+        case .userStatusLastMonth: return "был(а) в этом месяце"
+        case .userStatusEmpty: return "был(а) давно"
+        }
     }
 }
