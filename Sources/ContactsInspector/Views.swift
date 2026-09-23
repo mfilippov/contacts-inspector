@@ -28,6 +28,7 @@ struct RootView: View {
                     switch model.filter {
                     case .summary: SummaryView()
                     case .backups: BackupsView()
+                    case .telegram: TelegramView()
                     default: ContactTable()
                     }
                 }
@@ -116,12 +117,14 @@ struct BackupBanner: View {
 
 struct Sidebar: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var tg: TelegramService
 
     var body: some View {
         // Выбор реализован кнопками, а не List(selection:), — встроенный выбор в сайдбаре не срабатывал.
         List {
             SidebarRow(title: "Сводка", symbol: "chart.bar", filter: .summary)
             SidebarRow(title: "Бэкапы", symbol: "externaldrive", filter: .backups, badge: model.backups.count)
+            SidebarRow(title: "Telegram", symbol: "paperplane", filter: .telegram, badge: tg.users.count)
             SidebarRow(title: "Все контакты", symbol: "person.crop.rectangle.stack", filter: .all,
                        badge: model.contacts.count)
 
@@ -138,6 +141,16 @@ struct Sidebar: View {
                                    badge: model.contacts.filter { $0.record.groupIds.contains(g.identifier) }.count)
                     }
                 }
+            }
+            Section("Telegram") {
+                let m = model.matcher
+                let statuses = model.contacts.map { m.status($0.record) }
+                SidebarRow(title: "Связаны", symbol: "link", filter: .tgLinked,
+                           badge: statuses.filter(\.isLinked).count)
+                SidebarRow(title: "Можно связать", symbol: "link.badge.plus", filter: .tgSuggested,
+                           badge: statuses.filter(\.isSuggested).count)
+                SidebarRow(title: "Без Telegram", symbol: "minus.circle", filter: .tgNone,
+                           badge: statuses.filter { $0 == .none }.count)
             }
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,
@@ -216,11 +229,13 @@ struct SummaryView: View {
 
 struct ContactTable: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var tg: TelegramService
     @State private var sortOrder = [KeyPathComparator(\ContactRow.displayName)]
     @State private var columns = TableColumnCustomization<ContactRow>()
 
     var body: some View {
-        let rows = model.filtered.map(ContactRow.init).sorted(using: sortOrder)
+        let matcher = model.matcher
+        let rows = model.filtered.map { ContactRow($0, telegram: matcher.status($0.record)) }.sorted(using: sortOrder)
         Table(of: ContactRow.self, selection: $model.tableSelection, sortOrder: $sortOrder,
               columnCustomization: $columns) {
             nameColumns
@@ -295,6 +310,9 @@ extension ContactTable {
         TableColumn("ДР", value: \ContactRow.birthday).width(min: 60, ideal: 80).customizationID("birthday")
         TableColumn("Заметка", value: \ContactRow.note).width(min: 60, ideal: 120).customizationID("note")
         TableColumn("Прочее", value: \ContactRow.extra).width(min: 60, ideal: 120).customizationID("extra")
+        TableColumn("Telegram", value: \ContactRow.telegram) { (r: ContactRow) in
+            TelegramCell(status: r.telegramStatus)
+        }.width(min: 90, ideal: 130).customizationID("telegram")
         TableColumn("Аккаунт", value: \ContactRow.account).width(min: 60, ideal: 80).customizationID("account")
     }
 }
@@ -306,8 +324,16 @@ struct ContactRow: Identifiable {
     let displayName: String
     let hasName: Bool
     let givenName, familyName, organization, phones, emails, address, birthday, note, extra, account: String
+    let telegram: String
+    let telegramStatus: TGStatus
 
-    init(_ c: AppContact) {
+    init(_ c: AppContact, telegram status: TGStatus = .none) {
+        telegramStatus = status
+        switch status {
+        case .linked(let id, let username, _, _): telegram = "1 " + (username.map { "@\($0)" } ?? String(id))
+        case .suggested(let u): telegram = "2 " + u.name
+        case .none: telegram = "3"
+        }
         let r = c.record
         id = c.id
         thumbnail = c.thumbnail
@@ -423,6 +449,7 @@ struct ContactDetail: View {
                     (s.service.isEmpty ? (s.label ?? "") : s.service,
                      [s.username, s.urlString].filter { !$0.isEmpty }.joined(separator: " · "))
                 })
+                TelegramCardSection(contact: contact)
                 FieldSection(title: "Мессенджеры", rows: r.instantMessageAddresses.map { ($0.service, $0.username) })
                 FieldSection(title: "Заметка", rows: [("", r.note ?? "")])
 
@@ -466,6 +493,83 @@ struct FieldSection: View {
                 }
             }
             Divider()
+        }
+    }
+}
+
+/// Ячейка «Telegram» в таблице контактов Apple.
+struct TelegramCell: View {
+    let status: TGStatus
+    var body: some View {
+        switch status {
+        case .linked(let id, let username, let user, let outdated):
+            HStack(spacing: 4) {
+                Image(systemName: "link").foregroundStyle(user == nil ? Color.secondary : Color.accentColor)
+                Text(username.map { "@\($0)" } ?? String(id))
+                if outdated { Image(systemName: "arrow.triangle.2.circlepath").foregroundStyle(.orange).help("Ник в Telegram изменился") }
+            }
+        case .suggested(let u):
+            Text("найден: \(u.name)").foregroundStyle(.orange)
+        case .none:
+            Text("")
+        }
+    }
+}
+
+/// Блок «Telegram» в карточке контакта Apple.
+struct TelegramCardSection: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var tg: TelegramService
+    let contact: AppContact
+    @State private var picking = false
+
+    var body: some View {
+        let status = model.matcher.status(contact.record)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Telegram").font(.headline)
+            switch status {
+            case .linked(let id, let username, let user, let outdated):
+                HStack {
+                    TGAvatar(path: user?.photoPath, size: 22)
+                    Text(user?.name ?? "")
+                    Text(username.map { "@\($0)" } ?? "").foregroundStyle(.secondary)
+                    Text("ID \(id)").monospacedDigit().foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                if user == nil && tg.auth == .ready {
+                    Text("Этого пользователя нет в ваших контактах Telegram.").font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    if let user, outdated {
+                        Button("Обновить ник") { Task { await model.setTelegramLinks([(contact.id, user)]) } }
+                    }
+                    Button("Открыть в Telegram") {
+                        NSWorkspace.shared.open(URL(string: username.map { "https://t.me/\($0)" } ?? "tg://user?id=\(id)")!)
+                    }
+                    Button("Отвязать", role: .destructive) { Task { await model.setTelegramLinks([(contact.id, nil)]) } }
+                }.controlSize(.small)
+            case .suggested(let u):
+                HStack {
+                    TGAvatar(path: u.photoPath, size: 22)
+                    Text("Найден по телефону: \(u.name)")
+                    if let un = u.username { Text("@\(un)").foregroundStyle(.secondary) }
+                }
+                HStack {
+                    Button("Связать") { Task { await model.setTelegramLinks([(contact.id, u)]) } }
+                    Button("Другой…") { picking = true }.disabled(tg.auth != .ready)
+                }.controlSize(.small)
+            case .none:
+                if tg.auth == .ready {
+                    Button("Связать с Telegram…") { picking = true }.controlSize(.small)
+                } else {
+                    Text("Не связан. Войдите в Telegram в разделе «Telegram».").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Divider()
+        }
+        .sheet(isPresented: $picking) {
+            TelegramUserPicker(title: "Связать «\(contact.record.displayName)» с Telegram") { u in
+                Task { await model.setTelegramLinks([(contact.id, u)]) }
+            }
         }
     }
 }

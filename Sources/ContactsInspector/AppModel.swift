@@ -18,6 +18,10 @@ enum SidebarFilter: Hashable {
     case has(Field)
     case missing(Field)
     case noPhoneNoEmail
+    case telegram           // раздел Telegram
+    case tgLinked           // связаны с Telegram
+    case tgSuggested        // можно связать по телефону
+    case tgNone             // без Telegram
 }
 
 enum LoadState: Equatable {
@@ -43,6 +47,9 @@ final class AppModel: ObservableObject {
     @Published var editingId: String?
     @Published var pendingDelete: Set<String>?
     @Published var errorMessage: String?
+
+    /// Сервис Telegram (задаётся при старте приложения); нужен для фильтров и сопоставления.
+    weak var telegram: TelegramService?
 
     private let store = CNContactStore()
     private var fetchResult: FetchResult?
@@ -184,6 +191,47 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Telegram
+
+    var matcher: TelegramMatcher {
+        TelegramMatcher(users: telegram?.users ?? [], records: contacts.map(\.record))
+    }
+
+    /// Что сделает «Синхронизировать»: новые связи по телефону и обновление устаревших ников.
+    func telegramSyncPlan() -> [(contactId: String, user: TGUser)] {
+        let m = matcher
+        return contacts.compactMap { c in
+            switch m.status(c.record) {
+            case .suggested(let u): return (c.id, u)
+            case .linked(_, _, let u?, true): return (c.id, u)
+            default: return nil
+            }
+        }
+    }
+
+    /// Прописывает (user != nil) или убирает (user == nil) связь с Telegram в контактах Apple.
+    func setTelegramLinks(_ changes: [(contactId: String, user: TGUser?)]) async {
+        let pairs = changes.compactMap { ch in cnById[ch.contactId].map { ($0, ch.user) } }
+        guard !pairs.isEmpty else { return }
+        do {
+            try archive(pairs.map(\.0), action: "telegram")
+            let req = CNSaveRequest()
+            for (c, user) in pairs {
+                let m = c.mutableCopy() as! CNMutableContact
+                var profiles = c.socialProfiles.filter { !TelegramLink.isTelegram($0.value.service) }
+                if let user { profiles.append(TelegramLink.profile(for: user)) }
+                m.socialProfiles = profiles
+                req.update(m)
+            }
+            try store.execute(req)
+            debugLog("telegram links: \(pairs.count)")
+            await load(silent: true)
+        } catch {
+            debugLog("telegram links failed: \(error)")
+            errorMessage = "Не удалось записать связи с Telegram: \(error)"
+        }
+    }
+
     // MARK: - Бэкап
 
     /// Папка, где лежат все бэкапы (по умолчанию ~/Documents/Contacts Inspector Backups).
@@ -251,7 +299,17 @@ final class AppModel: ObservableObject {
     var filtered: [AppContact] {
         var list = contacts
         switch filter ?? .all {
-        case .summary, .backups, .all: break
+        case .summary, .backups, .all, .telegram: break
+        case .tgLinked, .tgSuggested, .tgNone:
+            let m = matcher
+            list = list.filter { c in
+                let st = m.status(c.record)
+                switch filter {
+                case .tgLinked: return st.isLinked
+                case .tgSuggested: return st.isSuggested
+                default: return st == .none
+                }
+            }
         case .container(let id): list = list.filter { $0.record.containerId == id }
         case .group(let id): list = list.filter { $0.record.groupIds.contains(id) }
         case .has(let f): list = list.filter { f.count($0.record) > 0 }

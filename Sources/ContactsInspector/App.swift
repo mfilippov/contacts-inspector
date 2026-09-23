@@ -49,13 +49,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct ContactsInspectorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var model = AppModel()
+    @StateObject private var telegram = TelegramService()
 
     var body: some Scene {
         WindowGroup("Contacts Inspector") {
             RootView()
                 .environmentObject(model)
+                .environmentObject(telegram)
                 .frame(minWidth: 1000, minHeight: 600)
-                .task { if model.state == .idle { await model.load() } }
+                .task {
+                    model.telegram = telegram
+                    if model.state == .idle { await model.load() }
+                    if telegram.hasSession { telegram.start() }
+                }
         }
         .defaultSize(width: 1500, height: 900)
     }

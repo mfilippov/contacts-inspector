@@ -105,7 +105,7 @@ func fetchAll(_ store: CNContactStore) throws -> FetchResult {
     for c in containers {
         debugLog("container name='\(c.name)' type=\(c.type.rawValue) id=\(c.identifier) contacts=\(containerOf.values.filter { $0 == c.identifier }.count)")
     }
-    if let def = try? store.defaultContainerIdentifier() { debugLog("default container = \(def)") }
+    debugLog("default container = \(store.defaultContainerIdentifier())")
     return FetchResult(contacts: contacts, notesViaAPI: notesViaAPI, containers: containers,
                        groups: groups, containerOf: containerOf, groupsOf: groupsOf)
 }
