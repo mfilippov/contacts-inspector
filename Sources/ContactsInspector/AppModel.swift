@@ -232,6 +232,35 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Удаляет контакты из Telegram; перед этим сохраняет их в историю (JSON, vCard, фото).
+    func deleteTelegramContacts(_ users: [TGUser]) async {
+        guard let telegram, !users.isEmpty else { return }
+        do {
+            await telegram.ensurePhotos()
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+            let stamp = fmt.string(from: Date())
+            let dir = historyDir.appendingPathComponent("\(stamp)_telegram-delete")
+            let fresh = users.map { u in telegram.users.first { $0.id == u.id } ?? u }
+            _ = try writeTelegramBackup(fresh, to: dir)
+            appendHistory(users.map { "\(stamp)\ttelegram-delete\t\($0.name)\t\(dir.lastPathComponent)" })
+            try await telegram.removeContacts(users.map(\.id))
+        } catch {
+            errorMessage = "Не удалось удалить контакты Telegram: \(error)"
+        }
+    }
+
+    private func appendHistory(_ lines: [String]) {
+        let logURL = historyDir.appendingPathComponent("history.log")
+        let text = lines.map { $0 + "\n" }.joined()
+        try? FileManager.default.createDirectory(at: historyDir, withIntermediateDirectories: true)
+        if let h = try? FileHandle(forWritingTo: logURL) {
+            h.seekToEndOfFile(); h.write(Data(text.utf8)); try? h.close()
+        } else {
+            try? text.write(to: logURL, atomically: true, encoding: .utf8)
+        }
+    }
+
     // MARK: - Бэкап
 
     /// Папка, где лежат все бэкапы (по умолчанию ~/Documents/Contacts Inspector Backups).

@@ -39,6 +39,35 @@ struct TelegramView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle("Telegram")
+        .confirmationDialog(autoDeleteTitle, isPresented: Binding(get: { tg.pendingAutoDelete != nil },
+                                                                 set: { if !$0 { tg.pendingAutoDelete = nil } }),
+                            titleVisibility: .visible, presenting: tg.pendingAutoDelete) { p in
+            Button(p.seconds == 0 ? "Выключить" : "Установить") {
+                Task {
+                    let r = await tg.setAutoDelete(userIds: p.userIds, seconds: p.seconds)
+                    tg.resultMessage = "Изменено чатов: \(r.changed)"
+                        + (r.errors.isEmpty ? "" : "\nОшибки (\(r.errors.count)):\n" + r.errors.prefix(10).joined(separator: "\n"))
+                }
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: { p in
+            Text("Чатов: \(p.userIds.filter { tg.chats[$0] != nil }.count). Собеседник увидит в чате служебное сообщение об изменении таймера.")
+        }
+        .confirmationDialog(removeTitle, isPresented: Binding(get: { tg.pendingRemove != nil },
+                                                             set: { if !$0 { tg.pendingRemove = nil } }),
+                            titleVisibility: .visible, presenting: tg.pendingRemove) { users in
+            Button("Удалить", role: .destructive) { Task { await model.deleteTelegramContacts(users) } }
+            Button("Отмена", role: .cancel) {}
+        } message: { users in
+            let names = users.prefix(10).map(\.name).joined(separator: "\n")
+            Text(names + (users.count > 10 ? "\n… и ещё \(users.count - 10)" : "")
+                 + "\n\nЧаты и переписка останутся. Копия контактов сохранится в истории.")
+        }
+        .alert("Telegram", isPresented: Binding(get: { tg.resultMessage != nil }, set: { if !$0 { tg.resultMessage = nil } })) {
+            Button("OK") { tg.resultMessage = nil }
+        } message: {
+            Text(tg.resultMessage ?? "")
+        }
         .alert("Telegram", isPresented: Binding(get: { tg.lastError != nil }, set: { if !$0 { tg.lastError = nil } })) {
             Button("OK") { tg.lastError = nil }
         } message: {
@@ -111,6 +140,32 @@ private struct TelegramQRView: View {
         let img = NSImage(size: rep.size)
         img.addRepresentation(rep)
         return img
+    }
+}
+
+extension TelegramView {
+    var autoDeleteTitle: String {
+        guard let p = tg.pendingAutoDelete else { return "" }
+        return p.seconds == 0 ? "Выключить автоудаление?" : "Автоудаление: \(TGChatInfo.describeAutoDelete(p.seconds))?"
+    }
+    var removeTitle: String {
+        let n = tg.pendingRemove?.count ?? 0
+        return n == 1 ? "Удалить контакт из Telegram?" : "Удалить из Telegram контакты (\(n))?"
+    }
+}
+
+/// Меню «Автоудаление» для набора пользователей.
+struct AutoDeleteMenu: View {
+    @EnvironmentObject var tg: TelegramService
+    let userIds: [Int64]
+    var body: some View {
+        let withChat = userIds.filter { tg.chats[$0]?.hasDialog == true }
+        Menu("Автоудаление") {
+            ForEach(TGChatInfo.autoDeleteOptions, id: \.seconds) { opt in
+                Button(opt.title) { tg.pendingAutoDelete = .init(userIds: withChat, seconds: opt.seconds) }
+            }
+        }
+        .disabled(withChat.isEmpty)
     }
 }
 
@@ -201,15 +256,25 @@ private struct TelegramContactsTable: View {
     @State private var confirmSync = false
     @State private var sortOrder = [KeyPathComparator(\TGRow.name)]
     @State private var showCard = true
+    @State private var chatFilter = ChatFilter.all
+
+    enum ChatFilter: String, CaseIterable { case all = "Все", withChat = "С чатом", autoDelete = "С автоудалением" }
 
     var body: some View {
-        let rows = makeRows().sorted(using: sortOrder)
+        let rows = makeRows().filter { r in
+            switch chatFilter {
+            case .all: true
+            case .withChat: r.chat?.hasDialog == true
+            case .autoDelete: r.autoDelete > 0
+            }
+        }.sorted(using: sortOrder)
         let plan = model.telegramSyncPlan()
         VStack(spacing: 0) {
             HStack {
                 Text("Контактов в Telegram: \(tg.users.count) · связано: \(rows.filter { !$0.appleIds.isEmpty }.count) · с чатом: \(rows.filter { $0.chat?.hasDialog == true }.count)")
                     .foregroundStyle(.secondary)
                 if tg.loadingContacts || tg.loadingChats { ProgressView().controlSize(.small) }
+                if let p = tg.bulkProgress { Text(p).foregroundStyle(.orange) }
                 Spacer()
                 Button { Task { await tg.loadContacts() } } label: { Label("Обновить", systemImage: "arrow.clockwise") }
                 Button { model.backupNow() } label: { Label("Бэкап", systemImage: "externaldrive.badge.plus") }
@@ -221,6 +286,10 @@ private struct TelegramContactsTable: View {
                 Button("Выйти") { tg.logOut() }
             }
             .padding(10)
+            Picker("", selection: $chatFilter) {
+                ForEach(ChatFilter.allCases, id: \.self) { Text($0.rawValue) }
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize().padding(.bottom, 8)
             Divider()
             Table(rows, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("") { (r: TGRow) in TGAvatar(path: r.user.photoPath, size: 20) }.width(24)
@@ -253,7 +322,14 @@ private struct TelegramContactsTable: View {
                     Divider()
                     Button("Открыть в Telegram") { NSWorkspace.shared.open(URL(string: r.user.link)!) }
                 }
+                Divider()
+                AutoDeleteMenu(userIds: Array(ids))
+                Button(ids.count > 1 ? "Удалить из контактов Telegram (\(ids.count))…" : "Удалить из контактов Telegram…",
+                       role: .destructive) {
+                    tg.pendingRemove = tg.users.filter { ids.contains($0.id) }
+                }
             }
+            .onDeleteCommand { tg.pendingRemove = tg.users.filter { selection.contains($0.id) } }
             .searchable(text: $search, placement: .toolbar, prompt: "Имя, телефон, username")
         }
         .inspector(isPresented: $showCard) {
@@ -355,8 +431,11 @@ struct TelegramContactCard: View {
                                 .textSelection(.enabled)
                         }
                         Text(user.status).font(.caption).foregroundStyle(.secondary)
-                        Button("Открыть в Telegram") { NSWorkspace.shared.open(URL(string: user.link)!) }
-                            .controlSize(.small)
+                        HStack {
+                            Button("Открыть в Telegram") { NSWorkspace.shared.open(URL(string: user.link)!) }
+                            Button("Удалить из контактов…", role: .destructive) { tg.pendingRemove = [user] }
+                        }
+                        .controlSize(.small)
                     }
                 }
 
@@ -382,6 +461,9 @@ struct TelegramContactCard: View {
                     ("Последнее сообщение", chat!.lastMessageDate?.formatted(date: .abbreviated, time: .shortened) ?? ""),
                     ("Автоудаление", chat!.autoDelete > 0 ? TGChatInfo.describeAutoDelete(chat!.autoDelete) : "выключено"),
                 ] : [("Статус", tg.loadingChats ? "загружаю чаты…" : "чата нет")])
+                if chat?.hasDialog == true {
+                    AutoDeleteMenu(userIds: [user.id]).fixedSize()
+                }
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Контакт Apple").font(.headline)

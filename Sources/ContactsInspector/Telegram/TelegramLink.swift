@@ -38,6 +38,11 @@ struct TGChatInfo: Equatable {
     var hasDialog: Bool { !lists.isEmpty }
     var isArchived: Bool { lists == ["archive"] }
 
+    /// Варианты таймера для меню.
+    static let autoDeleteOptions: [(title: String, seconds: Int)] = [
+        ("Выключить", 0), ("1 день", 86_400), ("1 неделя", 604_800), ("1 месяц", 2_678_400),
+    ]
+
     static func describeAutoDelete(_ seconds: Int) -> String {
         switch seconds {
         case 0: return ""

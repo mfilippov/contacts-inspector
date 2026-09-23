@@ -314,6 +314,72 @@ final class TelegramService: ObservableObject {
         if pos.order.rawValue == 0 { info.lists.remove(key) } else { info.lists.insert(key) }
     }
 
+    // MARK: - Изменения в Telegram
+
+    /// Запросы на подтверждение (диалоги показывает TelegramView).
+    struct PendingAutoDelete: Identifiable { let id = UUID(); let userIds: [Int64]; let seconds: Int }
+    @Published var pendingAutoDelete: PendingAutoDelete?
+    @Published var pendingRemove: [TGUser]?
+    @Published var resultMessage: String?
+
+    /// Прогресс массовой операции («Автоудаление: 3 из 20»), nil — ничего не выполняется.
+    @Published private(set) var bulkProgress: String?
+
+    /// Ставит таймер автоудаления (0 — выключить) в личных чатах с пользователями.
+    /// Возвращает число изменённых чатов и ошибки.
+    func setAutoDelete(userIds: [Int64], seconds: Int) async -> (changed: Int, errors: [String]) {
+        guard let client, auth == .ready else { return (0, ["Нет подключения к Telegram"]) }
+        let targets = userIds.compactMap { id in chats[id].map { (id, $0) } }
+            .filter { $0.1.autoDelete != seconds }
+        var changed = 0
+        var errors: [String] = []
+        for (i, (uid, chat)) in targets.enumerated() {
+            bulkProgress = "Автоудаление: \(i + 1) из \(targets.count)"
+            do {
+                try await withFloodRetry {
+                    _ = try await client.setChatMessageAutoDeleteTime(chatId: chat.chatId, messageAutoDeleteTime: seconds)
+                }
+                chats[uid]?.autoDelete = seconds
+                changed += 1
+            } catch {
+                errors.append("\(users.first { $0.id == uid }?.name ?? String(uid)): \(Self.describe(error))")
+            }
+            if targets.count > 1 { try? await Task.sleep(for: .milliseconds(400)) }
+        }
+        bulkProgress = nil
+        debugLog("telegram auto-delete \(seconds)s: changed \(changed), errors \(errors.count)")
+        return (changed, errors)
+    }
+
+    /// Удаляет пользователей из контактов Telegram (чаты не трогает).
+    func removeContacts(_ ids: [Int64]) async throws {
+        guard let client, auth == .ready else { throw ToolError("Нет подключения к Telegram") }
+        bulkProgress = "Удаляю контакты: \(ids.count)"
+        defer { bulkProgress = nil }
+        // одним запросом, но пачками по 100, чтобы не упереться в лимиты
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            let chunk = Array(ids[start..<min(start + 100, ids.count)])
+            try await withFloodRetry { _ = try await client.removeContacts(userIds: chunk) }
+            users.removeAll { chunk.contains($0.id) }
+            if start + 100 < ids.count { try? await Task.sleep(for: .seconds(1)) }
+        }
+        debugLog("telegram removed contacts: \(ids.count)")
+    }
+
+    /// Повторяет запрос после FLOOD_WAIT (ошибка 429 «retry after N»), один раз, если ждать не больше 60 с.
+    private func withFloodRetry(_ op: () async throws -> Void) async throws {
+        do {
+            try await op()
+        } catch let e as TDLibKit.Error where e.code == 429 {
+            let wait = Int(e.message.split(separator: " ").last ?? "") ?? 5
+            guard wait <= 60 else { throw e }
+            debugLog("telegram flood wait \(wait)s")
+            bulkProgress = (bulkProgress ?? "") + " — пауза \(wait) с (лимит Telegram)"
+            try await Task.sleep(for: .seconds(wait + 1))
+            try await op()
+        }
+    }
+
     // MARK: - Карточка
 
     private var fullInfoCache: [Int64: TGFullInfo] = [:]
