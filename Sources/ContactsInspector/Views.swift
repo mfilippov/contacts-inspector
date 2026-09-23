@@ -154,6 +154,8 @@ struct Sidebar: View {
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,
                            badge: model.contacts.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }.count)
+                SidebarRow(title: "Битые ссылки Telegram", symbol: "link.badge.plus", filter: .tgBrokenLinks,
+                           badge: model.brokenLinkContacts.count)
                 SidebarRow(title: "Без имени", symbol: "person.fill.questionmark", filter: .missing(.name),
                            badge: model.contacts.count - model.count(.name).contacts)
             }
@@ -229,6 +231,7 @@ struct SummaryView: View {
 struct ContactTable: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var tg: TelegramService
+    @State private var confirmFix = false
     @State private var sortOrder = [KeyPathComparator(\ContactRow.displayName)]
     @State private var columns = TableColumnCustomization<ContactRow>()
 
@@ -241,6 +244,24 @@ struct ContactTable: View {
             dataColumns
         } rows: {
             ForEach(rows) { TableRow($0) }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if model.filter == .tgBrokenLinks, !rows.isEmpty {
+                HStack {
+                    Text("Ссылки вида t.me/@idId(rawValue: …) оставил Telegram для iPhone. Внутри — настоящий ID пользователя.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Починить все (\(rows.count))") { confirmFix = true }.buttonStyle(.borderedProminent)
+                }
+                .padding(8)
+                .background(.bar)
+            }
+        }
+        .alert("Починить ссылки Telegram (\(model.brokenLinkContacts.count))?", isPresented: $confirmFix) {
+            Button("Починить") { Task { await model.fixBrokenTelegramLinks(model.brokenLinkContacts.map(\.id)) } }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Битые ссылки будут удалены, вместо них в контакт запишется связь с Telegram по ID (с username, если пользователь есть в ваших контактах Telegram). Копии контактов сохранятся в истории.")
         }
         .contextMenu(forSelectionType: String.self) { ids in
             if ids.count == 1, let id = ids.first {
@@ -527,7 +548,13 @@ struct TelegramCardSection: View {
 
     var body: some View {
         let status = model.matcher.status(contact.record)
+        let broken = TelegramLink.brokenLinkIds(contact.record)
         Section("Telegram") {
+            if let bid = broken.first {
+                LabeledContent("Битая ссылка (ID \(bid))") {
+                    Button("Починить") { Task { await model.fixBrokenTelegramLinks([contact.id]) } }
+                }
+            }
             switch status {
             case .linked(let id, let username, let user, let outdated):
                 HStack {

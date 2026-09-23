@@ -78,6 +78,7 @@ enum TelegramImport {
         var profiles = c.socialProfiles.filter { !TelegramLink.isTelegram($0.value.service) }
         profiles.append(TelegramLink.profile(for: s.user))
         m.socialProfiles = profiles
+        m.urlAddresses = TelegramLink.withoutBrokenLinks(c.urlAddresses)
         return m
     }
 

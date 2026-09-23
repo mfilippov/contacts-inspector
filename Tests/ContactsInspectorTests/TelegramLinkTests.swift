@@ -1,3 +1,4 @@
+import Contacts
 import XCTest
 @testable import ContactsInspector
 
@@ -69,5 +70,22 @@ final class TelegramBackupTests: XCTestCase {
         XCTAssertEqual(vcf.components(separatedBy: "BEGIN:VCARD").count - 1, 2)
         XCTAssertTrue(vcf.contains("t.me/ivan"))
         XCTAssertTrue(vcf.contains("PHOTO"))
+    }
+}
+
+final class BrokenLinkTests: XCTestCase {
+    func testParse() {
+        XCTAssertEqual(TelegramLink.brokenLinkId("https://t.me/@idId(rawValue: 123456789)"), 123456789)
+        XCTAssertEqual(TelegramLink.brokenLinkId("https://t.me/@id5000000001"), 5000000001)
+        XCTAssertNil(TelegramLink.brokenLinkId("https://t.me/ivan"))
+        XCTAssertNil(TelegramLink.brokenLinkId("https://example.com"))
+    }
+
+    func testWithoutBrokenLinks() {
+        let urls: [CNLabeledValue<NSString>] = [
+            CNLabeledValue(label: CNLabelURLAddressHomePage, value: "https://t.me/@idId(rawValue: 1)"),
+            CNLabeledValue(label: CNLabelHome, value: "https://example.com"),
+        ]
+        XCTAssertEqual(TelegramLink.withoutBrokenLinks(urls).map { $0.value as String }, ["https://example.com"])
     }
 }

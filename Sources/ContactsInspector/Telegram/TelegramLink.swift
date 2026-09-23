@@ -87,6 +87,22 @@ enum TelegramLink {
                                                           userIdentifier: String(u.id), service: service))
     }
 
+    /// ID из битой ссылки, которую оставлял Telegram для iPhone при сохранении контакта:
+    /// «https://t.me/@idId(rawValue: 123456789)» (или «https://t.me/@id123456789»).
+    static func brokenLinkId(_ url: String) -> Int64? {
+        guard let r = url.range(of: #"t\.me/@id(?:Id\(rawValue:\s*)?(\d+)"#, options: .regularExpression) else { return nil }
+        return Int64(url[r].filter(\.isNumber))
+    }
+
+    static func brokenLinkIds(_ r: ContactRecord) -> [Int64] {
+        r.urlAddresses.compactMap { brokenLinkId($0.value) }
+    }
+
+    /// Удаляет битые ссылки Telegram из списка URL контакта.
+    static func withoutBrokenLinks(_ urls: [CNLabeledValue<NSString>]) -> [CNLabeledValue<NSString>] {
+        urls.filter { brokenLinkId($0.value as String) == nil }
+    }
+
     /// Ключ для сравнения телефонов: последние 10 цифр; российская «8» в начале → «7».
     static func phoneKey(_ s: String) -> String? {
         var digits = s.filter(\.isASCII).filter(\.isNumber)
@@ -130,6 +146,10 @@ struct TelegramMatcher {
             let user = usersById[id]
             let outdated = user.map { ($0.username ?? "") != (TelegramLink.linkedUsername(r) ?? "") } ?? false
             return .linked(id: id, username: TelegramLink.linkedUsername(r), user: user, outdated: outdated)
+        }
+        // сначала — ID из битой ссылки Telegram (надёжнее телефона)
+        if let u = TelegramLink.brokenLinkIds(r).compactMap({ usersById[$0] }).first, appleByTelegramId[u.id] == nil {
+            return .suggested(u)
         }
         let candidates = Set(r.phoneNumbers.compactMap { TelegramLink.phoneKey($0.value) }
             .flatMap { usersByPhone[$0] ?? [] })
