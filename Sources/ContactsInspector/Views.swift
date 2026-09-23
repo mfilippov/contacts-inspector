@@ -154,8 +154,8 @@ struct Sidebar: View {
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,
                            badge: model.contacts.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }.count)
-                SidebarRow(title: "Битые ссылки Telegram", symbol: "link.badge.plus", filter: .tgBrokenLinks,
-                           badge: model.brokenLinkContacts.count)
+                SidebarRow(title: "Исправить связи Telegram", symbol: "link.badge.plus", filter: .tgNeedsFix,
+                           badge: model.linksNeedingFix.count)
                 SidebarRow(title: "Без имени", symbol: "person.fill.questionmark", filter: .missing(.name),
                            badge: model.contacts.count - model.count(.name).contacts)
             }
@@ -246,22 +246,22 @@ struct ContactTable: View {
             ForEach(rows) { TableRow($0) }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if model.filter == .tgBrokenLinks, !rows.isEmpty {
+            if model.filter == .tgNeedsFix, !rows.isEmpty {
                 HStack {
-                    Text("Ссылки вида t.me/@idId(rawValue: …) оставил Telegram для iPhone. Внутри — настоящий ID пользователя.")
+                    Text("Битые ссылки t.me/@idId(rawValue: …) от Telegram для iPhone и связи в старом формате. Исправление запишет официальный формат Telegram: https://t.me/@id<ID>.")
                         .font(.callout).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Починить все (\(rows.count))") { confirmFix = true }.buttonStyle(.borderedProminent)
+                    Button("Исправить все (\(rows.count))") { confirmFix = true }.buttonStyle(.borderedProminent)
                 }
                 .padding(8)
                 .background(.bar)
             }
         }
-        .alert("Починить ссылки Telegram (\(model.brokenLinkContacts.count))?", isPresented: $confirmFix) {
-            Button("Починить") { Task { await model.fixBrokenTelegramLinks(model.brokenLinkContacts.map(\.id)) } }
+        .alert("Исправить связи Telegram (\(model.linksNeedingFix.count))?", isPresented: $confirmFix) {
+            Button("Исправить") { Task { await model.fixTelegramLinks(model.linksNeedingFix.map(\.id)) } }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Битые ссылки будут удалены, вместо них в контакт запишется связь с Telegram по ID (с username, если пользователь есть в ваших контактах Telegram). Копии контактов сохранятся в истории.")
+            Text("В контакты запишется ссылка Telegram в официальном формате (и username, если пользователь есть в ваших контактах Telegram), битые ссылки и старые профили будут убраны. Копии контактов сохранятся в истории.")
         }
         .contextMenu(forSelectionType: String.self) { ids in
             if ids.count == 1, let id = ids.first {
@@ -548,11 +548,11 @@ struct TelegramCardSection: View {
 
     var body: some View {
         let status = model.matcher.status(contact.record)
-        let broken = TelegramLink.brokenLinkIds(contact.record)
+        let fixReason = TelegramLink.fixReason(contact.record)
         Section("Telegram") {
-            if let bid = broken.first {
-                LabeledContent("Битая ссылка (ID \(bid))") {
-                    Button("Починить") { Task { await model.fixBrokenTelegramLinks([contact.id]) } }
+            if let fixReason {
+                LabeledContent(fixReason) {
+                    Button("Исправить") { Task { await model.fixTelegramLinks([contact.id]) } }
                 }
             }
             switch status {

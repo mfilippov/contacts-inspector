@@ -22,7 +22,7 @@ enum SidebarFilter: Hashable {
     case tgLinked           // связаны с Telegram
     case tgSuggested        // можно связать по телефону
     case tgNone             // без Telegram
-    case tgBrokenLinks      // битые ссылки t.me/@idId(rawValue: …)
+    case tgNeedsFix         // связь с Telegram нужно исправить
 }
 
 enum LoadState: Equatable {
@@ -222,12 +222,7 @@ final class AppModel: ObservableObject {
             let req = CNSaveRequest()
             for (c, user) in pairs {
                 let m = c.mutableCopy() as! CNMutableContact
-                var profiles = c.socialProfiles.filter { !TelegramLink.isTelegram($0.value.service) }
-                if let user {
-                    profiles.append(TelegramLink.profile(for: user))
-                    m.urlAddresses = TelegramLink.withoutBrokenLinks(c.urlAddresses)
-                }
-                m.socialProfiles = profiles
+                TelegramLink.setLink(m, from: c, user: user)
                 req.update(m)
             }
             try store.execute(req)
@@ -239,34 +234,34 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Контакты с битыми ссылками Telegram.
-    var brokenLinkContacts: [AppContact] { contacts.filter { !TelegramLink.brokenLinkIds($0.record).isEmpty } }
+    /// Контакты, у которых связь с Telegram нужно исправить (битые ссылки, старый формат).
+    var linksNeedingFix: [AppContact] { contacts.filter { TelegramLink.fixReason($0.record) != nil } }
 
-    /// Чинит битые ссылки: убирает их и прописывает нормальную связь (если её ещё нет).
-    /// Пользователь из контактов Telegram — с username и t.me-ссылкой, иначе только по ID.
-    func fixBrokenTelegramLinks(_ ids: [String]) async {
-        let targets = ids.compactMap { id in cnById[id].map { ($0, contact(id)!.record) } }
-            .filter { !TelegramLink.brokenLinkIds($0.1).isEmpty }
+    /// Исправляет связи: пишет официальный формат (https://t.me/@id…, с username — если пользователь
+    /// есть в контактах Telegram), убирает битые ссылки и старые профили. Копии — в историю.
+    func fixTelegramLinks(_ ids: [String]) async {
+        let targets = ids.compactMap { id -> (CNContact, Int64)? in
+            guard let c = cnById[id], let r = contact(id)?.record, TelegramLink.fixReason(r) != nil,
+                  let tgId = TelegramLink.fixTargetId(r) else { return nil }
+            return (c, tgId)
+        }
         guard !targets.isEmpty else { return }
         let known = Dictionary((telegram?.users ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         do {
             try archive(targets.map(\.0), action: "telegram-fix")
             let req = CNSaveRequest()
-            for (c, r) in targets {
+            for (c, tgId) in targets {
                 let m = c.mutableCopy() as! CNMutableContact
-                m.urlAddresses = TelegramLink.withoutBrokenLinks(c.urlAddresses)
-                if TelegramLink.linkedId(r) == nil, let tgId = TelegramLink.brokenLinkIds(r).first {
-                    let user = known[tgId] ?? TGUser(id: tgId, firstName: "", lastName: "", phone: "", usernames: [],
-                                                     isMutual: false)
-                    m.socialProfiles = c.socialProfiles + [TelegramLink.profile(for: user)]
-                }
+                let user = known[tgId] ?? TGUser(id: tgId, firstName: "", lastName: "", phone: "", usernames: [],
+                                                 isMutual: false)
+                TelegramLink.setLink(m, from: c, user: user)
                 req.update(m)
             }
             try store.execute(req)
-            debugLog("fixed broken telegram links: \(targets.count)")
+            debugLog("fixed telegram links: \(targets.count)")
             await load(silent: true)
         } catch {
-            errorMessage = "Не удалось починить ссылки: \(error)"
+            errorMessage = "Не удалось исправить связи: \(error)"
         }
     }
 
@@ -429,7 +424,7 @@ final class AppModel: ObservableObject {
         case .group(let id): list = list.filter { $0.record.groupIds.contains(id) }
         case .has(let f): list = list.filter { f.count($0.record) > 0 }
         case .missing(let f): list = list.filter { f.count($0.record) == 0 }
-        case .tgBrokenLinks: list = list.filter { !TelegramLink.brokenLinkIds($0.record).isEmpty }
+        case .tgNeedsFix: list = list.filter { TelegramLink.fixReason($0.record) != nil }
         case .noPhoneNoEmail: list = list.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }
         }
         let q = search.trimmingCharacters(in: .whitespaces)

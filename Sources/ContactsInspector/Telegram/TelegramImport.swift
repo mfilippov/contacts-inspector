@@ -75,10 +75,8 @@ enum TelegramImport {
     static func apply(_ fields: Set<TGImportField>, from s: TGImportSource, to c: CNContact) -> CNMutableContact {
         let m = c.mutableCopy() as! CNMutableContact
         fill(m, fields: fields, from: s, existingPhones: c.phoneNumbers.map { $0.value.stringValue })
-        var profiles = c.socialProfiles.filter { !TelegramLink.isTelegram($0.value.service) }
-        profiles.append(TelegramLink.profile(for: s.user))
-        m.socialProfiles = profiles
-        m.urlAddresses = TelegramLink.withoutBrokenLinks(c.urlAddresses)
+        let linked = m.copy() as! CNContact   // с уже перенесёнными полями
+        TelegramLink.setLink(m, from: linked, user: s.user)
         return m
     }
 
@@ -87,7 +85,7 @@ enum TelegramImport {
         let m = CNMutableContact()
         fill(m, fields: Set(TGImportField.allCases).subtracting([.bio]), from: s, existingPhones: [])
         if m.givenName.isEmpty && m.familyName.isEmpty, let un = s.user.username { m.nickname = un }
-        m.socialProfiles = [TelegramLink.profile(for: s.user)]
+        TelegramLink.setLink(m, from: m.copy() as! CNContact, user: s.user)
         return m
     }
 

@@ -76,16 +76,36 @@ final class TelegramBackupTests: XCTestCase {
 final class BrokenLinkTests: XCTestCase {
     func testParse() {
         XCTAssertEqual(TelegramLink.brokenLinkId("https://t.me/@idId(rawValue: 123456789)"), 123456789)
-        XCTAssertEqual(TelegramLink.brokenLinkId("https://t.me/@id5000000001"), 5000000001)
-        XCTAssertNil(TelegramLink.brokenLinkId("https://t.me/ivan"))
-        XCTAssertNil(TelegramLink.brokenLinkId("https://example.com"))
+        XCTAssertNil(TelegramLink.brokenLinkId("https://t.me/@id5000000001"), "официальный формат — не битый")
+        XCTAssertEqual(TelegramLink.officialId("https://t.me/@id5000000001"), 5000000001)
+        XCTAssertNil(TelegramLink.officialId("https://t.me/ivan"))
     }
 
-    func testWithoutBrokenLinks() {
-        let urls: [CNLabeledValue<NSString>] = [
-            CNLabeledValue(label: CNLabelURLAddressHomePage, value: "https://t.me/@idId(rawValue: 1)"),
-            CNLabeledValue(label: CNLabelHome, value: "https://example.com"),
-        ]
-        XCTAssertEqual(TelegramLink.withoutBrokenLinks(urls).map { $0.value as String }, ["https://example.com"])
+    private func contact(urls: [String], profiles: [CNSocialProfile] = []) -> CNContact {
+        let m = CNMutableContact()
+        m.urlAddresses = urls.map { CNLabeledValue(label: CNLabelURLAddressHomePage, value: $0 as NSString) }
+        m.socialProfiles = profiles.map { CNLabeledValue(label: nil, value: $0) }
+        return m.copy() as! CNContact
+    }
+
+    func testSetLinkOfficialFormat() {
+        let foreign = CNSocialProfile(urlString: nil, username: "+7 910 000", userIdentifier: nil, service: "Telegram")
+        let legacy = CNSocialProfile(urlString: "tg://user?id=5", username: "", userIdentifier: "5", service: "Telegram")
+        let c = contact(urls: ["https://example.com", "https://t.me/@idId(rawValue: 5)"], profiles: [foreign, legacy])
+        let m = c.mutableCopy() as! CNMutableContact
+        TelegramLink.setLink(m, from: c, user: TGUser(id: 5, firstName: "", lastName: "", phone: "", usernames: [],
+                                                     isMutual: false))
+        XCTAssertEqual(m.urlAddresses.map { $0.value as String }, ["https://example.com", "https://t.me/@id5"])
+        XCTAssertEqual(m.urlAddresses.last?.label, "Telegram")
+        XCTAssertEqual(m.socialProfiles.map(\.value.username), ["+7 910 000"], "чужой профиль остаётся, tg:// — убран")
+
+        let withNick = c.mutableCopy() as! CNMutableContact
+        TelegramLink.setLink(withNick, from: c, user: TGUser(id: 5, firstName: "", lastName: "", phone: "",
+                                                            usernames: ["nick"], isMutual: false))
+        XCTAssertEqual(withNick.socialProfiles.last?.value.urlString, "https://t.me/nick")
+
+        let unlinked = c.mutableCopy() as! CNMutableContact
+        TelegramLink.setLink(unlinked, from: c, user: nil)
+        XCTAssertEqual(unlinked.urlAddresses.map { $0.value as String }, ["https://example.com"])
     }
 }

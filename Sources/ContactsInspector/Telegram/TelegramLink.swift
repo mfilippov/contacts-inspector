@@ -63,34 +63,41 @@ struct TGChatInfo: Equatable {
 
 /// Связь контакта Apple с Telegram хранится как соцпрофиль service = "Telegram":
 /// userIdentifier — числовой id, username — ник, urlString — ссылка.
+/// Связь контакта Apple с Telegram — в формате официального Telegram для iPhone
+/// (submodules/AccountContext/Sources/DeviceContactData.swift): URL с меткой «Telegram»
+/// и значением «https://t.me/@id<ID>». По нему Telegram сам узнаёт контакт; https-ссылка
+/// переживает синхронизацию iCloud (соцпрофиль с tg://… iCloud выбрасывает).
+/// Если есть username — дополнительно соцпрофиль «Telegram» со ссылкой https://t.me/<username>.
 enum TelegramLink {
     static let service = "Telegram"
+    static let urlLabel = "Telegram"
+    private static let officialPrefix = "https://t.me/@id"
 
     static func isTelegram(_ service: String) -> Bool {
         service.caseInsensitiveCompare(Self.service) == .orderedSame
     }
 
+    static func officialURL(_ id: Int64) -> String { officialPrefix + String(id) }
+
+    /// ID из официальной ссылки «https://t.me/@id123» (как её разбирает Telegram).
+    static func officialId(_ url: String) -> Int64? {
+        guard url.hasPrefix(officialPrefix) else { return nil }
+        return Int64(url.dropFirst(officialPrefix.count))
+    }
+
+    /// ID связанного пользователя: из официальной ссылки, иначе из соцпрофиля (старый формат).
     static func linkedId(_ r: ContactRecord) -> Int64? {
-        r.socialProfiles.lazy.filter { isTelegram($0.service) }.compactMap { Int64($0.userIdentifier) }.first
+        r.urlAddresses.lazy.compactMap { officialId($0.value) }.first
+            ?? r.socialProfiles.lazy.filter { isTelegram($0.service) }.compactMap { Int64($0.userIdentifier) }.first
     }
 
     static func linkedUsername(_ r: ContactRecord) -> String? {
-        r.socialProfiles.first { isTelegram($0.service) && !$0.username.isEmpty }?.username
+        r.socialProfiles.first { isTelegram($0.service) && !$0.username.isEmpty && Int64($0.userIdentifier) != nil }?.username
     }
 
-    static func hasTelegramProfile(_ r: ContactRecord) -> Bool {
-        r.socialProfiles.contains { isTelegram($0.service) }
-    }
-
-    static func profile(for u: TGUser) -> CNLabeledValue<CNSocialProfile> {
-        CNLabeledValue(label: nil, value: CNSocialProfile(urlString: u.link, username: u.username ?? "",
-                                                          userIdentifier: String(u.id), service: service))
-    }
-
-    /// ID из битой ссылки, которую оставлял Telegram для iPhone при сохранении контакта:
-    /// «https://t.me/@idId(rawValue: 123456789)» (или «https://t.me/@id123456789»).
+    /// ID из битой ссылки Telegram для iPhone 2021–2022 годов: «https://t.me/@idId(rawValue: 123456789)».
     static func brokenLinkId(_ url: String) -> Int64? {
-        guard let r = url.range(of: #"t\.me/@id(?:Id\(rawValue:\s*)?(\d+)"#, options: .regularExpression) else { return nil }
+        guard let r = url.range(of: #"t\.me/@idId\(rawValue:\s*(\d+)"#, options: .regularExpression) else { return nil }
         return Int64(url[r].filter(\.isNumber))
     }
 
@@ -98,9 +105,53 @@ enum TelegramLink {
         r.urlAddresses.compactMap { brokenLinkId($0.value) }
     }
 
-    /// Удаляет битые ссылки Telegram из списка URL контакта.
-    static func withoutBrokenLinks(_ urls: [CNLabeledValue<NSString>]) -> [CNLabeledValue<NSString>] {
-        urls.filter { brokenLinkId($0.value as String) == nil }
+    /// Почему связь нужно исправить (nil — всё в порядке).
+    static func fixReason(_ r: ContactRecord) -> String? {
+        if let id = brokenLinkIds(r).first { return "Битая ссылка Telegram (ID \(id))" }
+        let hasOfficial = r.urlAddresses.contains { officialId($0.value) != nil }
+        let legacy = r.socialProfiles.filter { isTelegram($0.service) && Int64($0.userIdentifier) != nil }
+        if !hasOfficial, let id = legacy.first.flatMap({ Int64($0.userIdentifier) }) {
+            return "Связь в старом формате (ID \(id))"
+        }
+        if legacy.contains(where: { $0.urlString.hasPrefix("tg:") || ($0.username.isEmpty && $0.urlString.isEmpty) }) {
+            return "Лишний профиль Telegram без ссылки"
+        }
+        return nil
+    }
+
+    /// ID, который будет прописан при исправлении.
+    static func fixTargetId(_ r: ContactRecord) -> Int64? { linkedId(r) ?? brokenLinkIds(r).first }
+
+    /// Прописывает связь (user != nil) или убирает её (user == nil) в копии контакта.
+    /// Старые и битые форматы при этом удаляются, остальные URL и соцпрофили не трогаются.
+    static func setLink(_ m: CNMutableContact, from c: CNContact, user: TGUser?) {
+        let otherURLs = c.urlAddresses.filter { lv in
+            let v = lv.value as String
+            return officialId(v) == nil && brokenLinkId(v) == nil
+        }
+        let otherProfiles = c.socialProfiles.filter { !isLinkProfile($0.value) }
+        guard let user else {
+            m.urlAddresses = otherURLs
+            m.socialProfiles = otherProfiles
+            return
+        }
+        m.urlAddresses = otherURLs + [CNLabeledValue(label: urlLabel, value: officialURL(user.id) as NSString)]
+        m.socialProfiles = otherProfiles + (usernameProfile(for: user).map { [$0] } ?? [])
+    }
+
+    /// Соцпрофиль связи, который мы пишем или должны заменить: Telegram с числовым ID,
+    /// со ссылкой tg://… или совсем пустой. Профили, созданные другими приложениями
+    /// (например, Telegram с телефоном вместо ника), не трогаем.
+    private static func isLinkProfile(_ p: CNSocialProfile) -> Bool {
+        isTelegram(p.service) && (Int64(p.userIdentifier) != nil || p.urlString.hasPrefix("tg:")
+            || (p.username.isEmpty && p.urlString.isEmpty))
+    }
+
+    /// Соцпрофиль с username (только если он есть) — кликабельная ссылка в «Контактах».
+    static func usernameProfile(for u: TGUser) -> CNLabeledValue<CNSocialProfile>? {
+        guard let un = u.username else { return nil }
+        return CNLabeledValue(label: nil, value: CNSocialProfile(urlString: "https://t.me/\(un)", username: un,
+                                                                 userIdentifier: String(u.id), service: service))
     }
 
     /// Ключ для сравнения телефонов: последние 10 цифр; российская «8» в начале → «7».

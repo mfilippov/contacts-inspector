@@ -113,8 +113,7 @@ func writeTelegramBackup(_ users: [TGUser], to dir: URL) throws -> Int {
         if !u.phone.isEmpty {
             c.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMobile, value: CNPhoneNumber(stringValue: u.phoneDisplay))]
         }
-        c.urlAddresses = [CNLabeledValue(label: "Telegram", value: u.link as NSString)]
-        c.socialProfiles = [TelegramLink.profile(for: u)]
+        TelegramLink.setLink(c, from: c.copy() as! CNContact, user: u)
         c.imageData = imageData
         let vcard = try vcardString(for: c, note: nil)
         vcards += vcard.hasSuffix("\n") ? vcard : vcard + "\r\n"

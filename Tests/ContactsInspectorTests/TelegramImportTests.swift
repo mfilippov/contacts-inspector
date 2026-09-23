@@ -23,6 +23,7 @@ final class TelegramImportTests: XCTestCase {
         XCTAssertEqual(m.birthday?.day, 5)
         XCTAssertEqual(m.imageData, Data([1, 2]))
         XCTAssertEqual(m.socialProfiles.first?.value.userIdentifier, "42")
+        XCTAssertEqual(m.urlAddresses.map { $0.value as String }, ["https://t.me/@id42"])
         XCTAssertEqual(m.familyName, "", "не выбранные поля не трогаем")
     }
 
