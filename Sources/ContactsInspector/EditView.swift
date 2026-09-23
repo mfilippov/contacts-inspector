@@ -84,18 +84,19 @@ private struct NameSection: View {
     }
 }
 
+/// Выбор метки. Picker, а не Menu: SwiftUI Menu на macOS 27 не открывается.
 private struct LabelMenu: View {
     let kind: LabelKind
     @Binding var label: String
 
     var body: some View {
-        Menu(LabelKind.title(label)) {
-            ForEach(kind.options, id: \.self) { opt in
-                Button(LabelKind.title(opt)) { label = opt }
-            }
-            Divider()
-            Button("без метки") { label = "" }
+        // текущая метка может быть нестандартной — добавляем её в список
+        let options = [""] + kind.options + (label.isEmpty || kind.options.contains(label) ? [] : [label])
+        Picker("", selection: $label) {
+            ForEach(options, id: \.self) { Text(LabelKind.title($0)).tag($0) }
         }
+        .labelsHidden()
+        .pickerStyle(.menu)
         .fixedSize()
     }
 }

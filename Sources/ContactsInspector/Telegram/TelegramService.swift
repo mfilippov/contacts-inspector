@@ -99,6 +99,11 @@ final class TelegramService: ObservableObject {
     private var config: TelegramConfig?
 
     init() {
+        if UserDefaults.standard.bool(forKey: "debugNoTelegram") {   // отладка: не трогаем Keychain
+            config = nil
+            auth = .notConfigured
+            return
+        }
         var c = TelegramConfig.load()
         if let b = TelegramConfig.bundledCredentials(), c?.apiId != b.apiId || c?.apiHash != b.apiHash {
             // Ключи встроены в приложение — пользователю вводить их не нужно.
@@ -111,7 +116,7 @@ final class TelegramService: ObservableObject {
 
     /// Если уже входили раньше — база TDLib на месте, запускаемся автоматически.
     var hasSession: Bool {
-        FileManager.default.fileExists(atPath: TelegramConfig.dir.appendingPathComponent("db/td.binlog").path)
+        config != nil && FileManager.default.fileExists(atPath: TelegramConfig.dir.appendingPathComponent("db/td.binlog").path)
     }
 
     func configure(apiId: Int, apiHash: String) {
@@ -318,8 +323,12 @@ final class TelegramService: ObservableObject {
 
     /// Запросы на подтверждение (диалоги показывает TelegramView).
     struct PendingAutoDelete: Identifiable { let id = UUID(); let userIds: [Int64]; let seconds: Int }
-    @Published var pendingAutoDelete: PendingAutoDelete?
-    @Published var pendingRemove: [TGUser]?
+    @Published var pendingAutoDelete: PendingAutoDelete? {
+        didSet { if let p = pendingAutoDelete { debugLog("confirm auto-delete \(p.seconds)s for \(p.userIds.count)") } }
+    }
+    @Published var pendingRemove: [TGUser]? {
+        didSet { if let p = pendingRemove { debugLog("confirm telegram remove \(p.count)") } }
+    }
     @Published var resultMessage: String?
 
     /// Прогресс массовой операции («Автоудаление: 3 из 20»), nil — ничего не выполняется.

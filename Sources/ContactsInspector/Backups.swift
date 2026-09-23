@@ -100,7 +100,7 @@ struct BackupsView: View {
         .navigationTitle("Бэкапы")
         .navigationSubtitle("\(model.backups.count) шт.")
         .task { await model.refreshBackups() }
-        .confirmationDialog("Удалить бэкап \(toTrash?.dateText ?? "")?",
+        .alert("Удалить бэкап \(toTrash?.dateText ?? "")?",
                             isPresented: Binding(get: { toTrash != nil }, set: { if !$0 { toTrash = nil } })) {
             Button("В корзину", role: .destructive) {
                 if let b = toTrash { model.trashBackup(b) }

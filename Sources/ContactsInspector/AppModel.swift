@@ -45,7 +45,9 @@ final class AppModel: ObservableObject {
     @Published var lastBackup: Date? = UserDefaults.standard.object(forKey: "lastBackup") as? Date
 
     @Published var editingId: String?
-    @Published var pendingDelete: Set<String>?
+    @Published var pendingDelete: Set<String>? {
+        didSet { if let p = pendingDelete { debugLog("confirm delete \(p.count)") } }
+    }
     @Published var errorMessage: String?
 
     /// Сервис Telegram (задаётся при старте приложения); нужен для фильтров и сопоставления.
@@ -106,6 +108,7 @@ final class AppModel: ObservableObject {
     // MARK: - Правка и удаление
 
     func startEditing(_ id: String) {
+        debugLog("startEditing")
         tableSelection = [id]
         editingId = id
         showInspector = true

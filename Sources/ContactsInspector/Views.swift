@@ -49,9 +49,8 @@ struct RootView: View {
                 .disabled(model.state != .loaded || model.backupInProgress)
             }
         }
-        .confirmationDialog(deleteTitle, isPresented: Binding(get: { model.pendingDelete != nil },
-                                                             set: { if !$0 { model.pendingDelete = nil } }),
-                            titleVisibility: .visible) {
+        .alert(deleteTitle, isPresented: Binding(get: { model.pendingDelete != nil },
+                                                             set: { if !$0 { model.pendingDelete = nil } })) {
             Button("Удалить", role: .destructive) {
                 if let ids = model.pendingDelete { Task { await model.delete(ids) } }
                 model.pendingDelete = nil
@@ -400,8 +399,10 @@ struct ContactDetail: View {
 
     var body: some View {
         let r = contact.record
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+        // Form(.grouped), а не ScrollView: на macOS 27 кнопки в ScrollView — корне .inspector — не нажимаются
+        // (см. repro/InspectorScrollButton).
+        Form {
+            Section {
                 HStack(alignment: .top, spacing: 16) {
                     Avatar(data: contact.image ?? contact.thumbnail, size: 96)
                     VStack(alignment: .leading, spacing: 4) {
@@ -422,6 +423,7 @@ struct ContactDetail: View {
                         }
                     }
                 }
+            }
 
                 FieldSection(title: "Имя", rows: [
                     ("Префикс", r.namePrefix), ("Имя", r.givenName), ("Отчество", r.middleName),
@@ -453,11 +455,11 @@ struct ContactDetail: View {
                 FieldSection(title: "Мессенджеры", rows: r.instantMessageAddresses.map { ($0.service, $0.username) })
                 FieldSection(title: "Заметка", rows: [("", r.note ?? "")])
 
+            Section {
                 Text("ID: \(r.identifier)").font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .formStyle(.grouped)
     }
 
     private func label(_ l: ContactRecord.Labeled) -> String {
@@ -473,7 +475,7 @@ struct ContactDetail: View {
     }
 }
 
-/// Секция деталей: показывает только непустые строки, пустая секция не рисуется.
+/// Секция формы: показывает только непустые строки, пустая секция не рисуется.
 struct FieldSection: View {
     let title: String
     let rows: [(String, String)]
@@ -481,18 +483,17 @@ struct FieldSection: View {
     var body: some View {
         let filled = rows.filter { !$0.1.isEmpty }
         if !filled.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline)
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                    ForEach(Array(filled.enumerated()), id: \.offset) { _, row in
-                        GridRow {
-                            Text(row.0).foregroundStyle(.secondary).frame(minWidth: 120, alignment: .leading)
-                            Text(row.1).textSelection(.enabled)
+            Section(title) {
+                ForEach(Array(filled.enumerated()), id: \.offset) { _, row in
+                    if row.0.isEmpty {
+                        Text(row.1).textSelection(.enabled)
+                    } else {
+                        LabeledContent(row.0) {
+                            Text(row.1).textSelection(.enabled).multilineTextAlignment(.trailing)
                         }
                     }
                 }
             }
-            Divider()
         }
     }
 }
@@ -525,8 +526,7 @@ struct TelegramCardSection: View {
 
     var body: some View {
         let status = model.matcher.status(contact.record)
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Telegram").font(.headline)
+        Section("Telegram") {
             switch status {
             case .linked(let id, let username, let user, let outdated):
                 HStack {
@@ -564,7 +564,6 @@ struct TelegramCardSection: View {
                     Text("Не связан. Войдите в Telegram в разделе «Telegram».").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Divider()
         }
         .sheet(isPresented: $picking) {
             TelegramUserPicker(title: "Связать «\(contact.record.displayName)» с Telegram") { u in
