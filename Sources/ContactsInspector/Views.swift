@@ -55,6 +55,7 @@ struct RootView: View {
                 if let ids = model.pendingDelete { Task { await model.delete(ids) } }
                 model.pendingDelete = nil
             }
+            .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) { model.pendingDelete = nil }
         } message: {
             Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории.")
@@ -259,6 +260,7 @@ struct ContactTable: View {
         }
         .alert("Исправить связи Telegram (\(model.linksNeedingFix.count))?", isPresented: $confirmFix) {
             Button("Исправить") { Task { await model.fixTelegramLinks(model.linksNeedingFix.map(\.id)) } }
+                .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: {
             Text("В контакты запишется ссылка Telegram в официальном формате (и username, если пользователь есть в ваших контактах Telegram), битые ссылки и старые профили будут убраны. Копии контактов сохранятся в истории.")
@@ -274,6 +276,7 @@ struct ContactTable: View {
             if ids.count == 1, let id = ids.first { model.startEditing(id) }
         }
         .onDeleteCommand { model.confirmDelete(model.tableSelection) }
+        .onChange(of: rows.map(\.id), initial: true) { _, ids in model.tableOrder = ids }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Имя, телефон, email, заметка")
         .navigationSubtitle("\(rows.count) шт.")
         .inspector(isPresented: $model.showInspector) {

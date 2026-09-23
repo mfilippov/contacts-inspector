@@ -106,6 +106,7 @@ struct BackupsView: View {
                 if let b = toTrash { model.trashBackup(b) }
                 toTrash = nil
             }
+            .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) { toTrash = nil }
         }
     }

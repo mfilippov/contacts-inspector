@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     @Published var search = ""
     @Published var tableSelection = Set<String>() { didSet { debugLog("tableSelection -> \(tableSelection.count)") } }
     @Published var showInspector = true
+    /// Текущий порядок строк таблицы контактов (с учётом сортировки и фильтра) — задаёт ContactTable.
+    var tableOrder: [String] = []
     @Published var backupInProgress = false
     @Published var backupMessage: String?
     @Published var lastBackup: Date? = UserDefaults.standard.object(forKey: "lastBackup") as? Date
@@ -106,7 +108,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: - Правка и удаление
+// MARK: - Правка и удаление
 
     func startEditing(_ id: String) {
         debugLog("startEditing")
@@ -157,10 +159,11 @@ final class AppModel: ObservableObject {
             try archive(contacts, action: "delete")
             let req = CNSaveRequest()
             for c in contacts { req.delete(c.mutableCopy() as! CNMutableContact) }
+            let next = nextSelection(removing: ids, order: tableOrder)
             try store.execute(req)
             debugLog("deleted \(contacts.count)")
-            tableSelection.subtract(ids)
             await load(silent: true)
+            tableSelection = next.map { [$0] } ?? []
         } catch {
             debugLog("delete failed: \(error)")
             errorMessage = "Не удалось удалить: \(error)"
@@ -319,7 +322,9 @@ final class AppModel: ObservableObject {
             let fresh = users.map { u in telegram.users.first { $0.id == u.id } ?? u }
             _ = try writeTelegramBackup(fresh, to: dir)
             appendHistory(users.map { "\(stamp)\ttelegram-delete\t\($0.name)\t\(dir.lastPathComponent)" })
+            let next = nextSelection(removing: Set(users.map(\.id)), order: telegram.tableOrder)
             try await telegram.removeContacts(users.map(\.id))
+            telegram.selection = next.map { [$0] } ?? []
         } catch {
             errorMessage = "Не удалось удалить контакты Telegram: \(error)"
         }
@@ -482,4 +487,11 @@ final class AppModel: ObservableObject {
         }
         return (c, v)
     }
+}
+
+/// Строка, которую выделить после удаления: следующая за последней удалённой, иначе предыдущая.
+func nextSelection<T: Hashable>(removing: Set<T>, order: [T]) -> T? {
+    let idx = order.indices.filter { removing.contains(order[$0]) }
+    guard let first = idx.first, let last = idx.last else { return nil }
+    return order[(last + 1)...].first { !removing.contains($0) } ?? order[..<first].last { !removing.contains($0) }
 }

@@ -48,6 +48,7 @@ struct TelegramView: View {
                         + (r.errors.isEmpty ? "" : "\nОшибки (\(r.errors.count)):\n" + r.errors.prefix(10).joined(separator: "\n"))
                 }
             }
+            .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: { p in
             Text("Чатов: \(p.userIds.filter { tg.chats[$0] != nil }.count). Собеседник увидит в чате служебное сообщение об изменении таймера.")
@@ -55,6 +56,7 @@ struct TelegramView: View {
         .alert(removeTitle, isPresented: Binding(get: { tg.pendingRemove != nil },
                                                              set: { if !$0 { tg.pendingRemove = nil } }), presenting: tg.pendingRemove) { users in
             Button("Удалить", role: .destructive) { Task { await model.deleteTelegramContacts(users) } }
+                .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: { users in
             let names = users.prefix(10).map(\.name).joined(separator: "\n")
@@ -72,6 +74,7 @@ struct TelegramView: View {
                     tg.resultMessage = "Создано контактов в Apple: \(ids.count)"
                 }
             }
+            .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: { users in
             let suggested = users.filter { u in
@@ -344,7 +347,6 @@ struct TGRow: Identifiable {
 private struct TelegramContactsTable: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var tg: TelegramService
-    @State private var selection = Set<Int64>()
     @State private var search = ""
     @State private var pickFor: TGUser?
     @State private var confirmSync = false
@@ -385,7 +387,7 @@ private struct TelegramContactsTable: View {
             }
             .pickerStyle(.segmented).labelsHidden().fixedSize().padding(.bottom, 8)
             Divider()
-            Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            Table(rows, selection: $tg.selection, sortOrder: $sortOrder) {
                 TableColumn("") { (r: TGRow) in TGAvatar(path: r.user.photoPath, size: 20) }.width(24)
                 TableColumn("Имя", value: \TGRow.name).width(min: 120, ideal: 180)
                 TableColumn("Телефон", value: \TGRow.phone).width(min: 100, ideal: 140)
@@ -429,15 +431,16 @@ private struct TelegramContactsTable: View {
                     tg.pendingRemove = tg.users.filter { ids.contains($0.id) }
                 }
             }
-            .onDeleteCommand { tg.pendingRemove = tg.users.filter { selection.contains($0.id) } }
+            .onDeleteCommand { tg.pendingRemove = tg.users.filter { tg.selection.contains($0.id) } }
+            .onChange(of: rows.map(\.id), initial: true) { _, ids in tg.tableOrder = ids }
             .searchable(text: $search, placement: .toolbar, prompt: "Имя, телефон, username")
         }
         .inspector(isPresented: $showCard) {
             Group {
-                if selection.count == 1, let u = tg.users.first(where: { $0.id == selection.first }) {
+                if tg.selection.count == 1, let u = tg.users.first(where: { $0.id == tg.selection.first }) {
                     TelegramContactCard(user: u).id(u.id)
                 } else {
-                    Text(selection.isEmpty ? "Выберите контакт" : "Выбрано: \(selection.count)").foregroundStyle(.secondary)
+                    Text(tg.selection.isEmpty ? "Выберите контакт" : "Выбрано: \(tg.selection.count)").foregroundStyle(.secondary)
                 }
             }
             .inspectorColumnWidth(min: 280, ideal: 340, max: 520)
@@ -454,6 +457,7 @@ private struct TelegramContactsTable: View {
         }
         .alert("Синхронизировать с Telegram?", isPresented: $confirmSync) {
             Button("Записать связи (\(plan.count))") { Task { await model.setTelegramLinks(plan.map { ($0.contactId, $0.user) }) } }
+                .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: {
             Text(syncMessage(plan))

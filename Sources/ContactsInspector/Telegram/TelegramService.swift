@@ -87,6 +87,9 @@ final class TelegramService: ObservableObject {
     @Published private(set) var auth: TGAuth
     @Published private(set) var users: [TGUser] = []
     @Published private(set) var loadingContacts = false
+    /// Выделение в таблице Telegram и её текущий порядок (для выбора следующей строки после удаления).
+    @Published var selection = Set<Int64>()
+    var tableOrder: [Int64] = []
     /// Личные чаты: id пользователя → информация о чате.
     @Published private(set) var chats: [Int64: TGChatInfo] = [:]
     @Published private(set) var loadingChats = false

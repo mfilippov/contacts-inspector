@@ -59,3 +59,15 @@ final class EditingTests: XCTestCase {
         XCTAssertThrowsError(try e.apply(to: c))
     }
 }
+
+final class NextSelectionTests: XCTestCase {
+    func testNext() {
+        let order = ["a", "b", "c", "d"]
+        XCTAssertEqual(nextSelection(removing: ["b"], order: order), "c")
+        XCTAssertEqual(nextSelection(removing: ["b", "c"], order: order), "d")
+        XCTAssertEqual(nextSelection(removing: ["d"], order: order), "c", "удалили последнюю — берём предыдущую")
+        XCTAssertEqual(nextSelection(removing: ["a", "c"], order: order), "d")
+        XCTAssertNil(nextSelection(removing: ["a", "b", "c", "d"], order: order))
+        XCTAssertNil(nextSelection(removing: ["x"], order: order))
+    }
+}
