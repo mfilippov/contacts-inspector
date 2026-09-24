@@ -25,6 +25,7 @@ enum SidebarFilter: Hashable {
     case tgNeedsFix         // связь с Telegram нужно исправить
     case tgNameDiffers      // связан, но имя отличается от Telegram
     case duplicates         // возможные дубли (общий телефон, email или имя)
+    case cyrillicNames      // имя, отчество или фамилия кириллицей
 }
 
 enum LoadState: Equatable {
@@ -58,6 +59,8 @@ final class AppModel: ObservableObject {
     @Published var noteBlockedContact: String?
     /// Контакты, выбранные для объединения (открывает окно объединения).
     @Published var mergeIds: [String]?
+    /// Контакты, выбранные для транслитерации (открывает подтверждение).
+    @Published var pendingTranslit: [String]?
 
     /// Сервис Telegram (задаётся при старте приложения); нужен для фильтров и сопоставления.
     weak var telegram: TelegramService?
@@ -389,6 +392,50 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    // MARK: - Транслитерация
+
+    func hasCyrillicName(_ r: ContactRecord) -> Bool {
+        Translit.hasCyrillic(r.givenName) || Translit.hasCyrillic(r.middleName) || Translit.hasCyrillic(r.familyName)
+    }
+
+    /// Было → станет, для подтверждения.
+    func translitPreview(_ id: String) -> (from: String, to: String)? {
+        guard let r = contact(id)?.record, hasCyrillicName(r) else { return nil }
+        let from = [r.givenName, r.middleName, r.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+        return (from, Translit.latin(from))
+    }
+
+    /// Переводит имя, отчество и фамилию в латиницу (кириллица заменяется). Копии — в историю.
+    func transliterate(_ ids: [String]) async {
+        let targets = ids.compactMap { id in cnById[id].flatMap { c in contact(id).map { (c, $0.record) } } }
+            .filter { hasCyrillicName($0.1) }
+        guard !targets.isEmpty else { return }
+        do {
+            try archive(targets.map(\.0), action: "translit")
+            let plain = targets.filter { !hasNote($0.0.identifier) }
+            if !plain.isEmpty {
+                let req = CNSaveRequest()
+                for (c, r) in plain {
+                    let m = c.mutableCopy() as! CNMutableContact
+                    m.givenName = Translit.latin(r.givenName)
+                    m.middleName = Translit.latin(r.middleName)
+                    m.familyName = Translit.latin(r.familyName)
+                    req.update(m)
+                }
+                try store.execute(req)
+            }
+            for (c, r) in targets where hasNote(c.identifier) {
+                try setNamesViaAppleScript(contactId: c.identifier, first: Translit.latin(r.givenName),
+                                           middle: Translit.latin(r.middleName), last: Translit.latin(r.familyName))
+            }
+            debugLog("transliterated \(targets.count)")
+            await load(silent: true)
+        } catch {
+            errorMessage = "Не удалось перевести имена в латиницу: \(error)"
+            await load(silent: true)
+        }
+    }
+
     // MARK: - Объединение
 
     func cnContact(_ id: String) -> CNContact? { cnById[id] }
@@ -591,6 +638,7 @@ final class AppModel: ObservableObject {
         case .has(let f): list = list.filter { f.count($0.record) > 0 }
         case .missing(let f): list = list.filter { f.count($0.record) == 0 }
         case .tgNeedsFix: list = list.filter { TelegramLink.fixReason($0.record) != nil }
+        case .cyrillicNames: list = list.filter { hasCyrillicName($0.record) }
         case .duplicates:
             let ids = DuplicateFinder.duplicateIds(contacts.map(\.record))
             list = list.filter { ids.contains($0.id) }

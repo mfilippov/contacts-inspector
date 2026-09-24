@@ -77,6 +77,14 @@ private struct NameSection: View {
             TextField("Девичья фамилия", text: $edit.previousFamilyName, prompt: Text("не указано"))
             TextField("Суффикс", text: $edit.nameSuffix, prompt: Text("не указано"))
             TextField("Псевдоним", text: $edit.nickname, prompt: Text("не указано"))
+            if Translit.hasCyrillic(edit.givenName + edit.middleName + edit.familyName) {
+                Button("Латиницей") {
+                    edit.givenName = Translit.latin(edit.givenName)
+                    edit.middleName = Translit.latin(edit.middleName)
+                    edit.familyName = Translit.latin(edit.familyName)
+                }
+                .help("Перевести имя, отчество и фамилию в латиницу — проверьте и сохраните")
+            }
         }
         Section("Фонетическое имя") {
             TextField("Имя", text: $edit.phoneticGivenName, prompt: Text("не указано"))

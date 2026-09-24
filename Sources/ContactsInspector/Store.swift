@@ -200,6 +200,22 @@ func setTelegramLinkViaAppleScript(contactId: String, officialURL: String, usern
     _ = try runOSAScript(script, args: [contactId, officialURL, username, userId])
 }
 
+/// Меняет имя/отчество/фамилию через Contacts.app (для контактов с заметкой — см. выше).
+func setNamesViaAppleScript(contactId: String, first: String, middle: String, last: String) throws {
+    let script = """
+    on run argv
+        tell application "Contacts"
+            set p to person id (item 1 of argv)
+            set first name of p to (item 2 of argv)
+            set middle name of p to (item 3 of argv)
+            set last name of p to (item 4 of argv)
+            save
+        end tell
+    end run
+    """
+    _ = try runOSAScript(script, args: [contactId, first, middle, last])
+}
+
 /// Удаляет контакт через Contacts.app (для контактов с заметкой, см. выше).
 func deleteContactViaAppleScript(contactId: String) throws {
     let script = """

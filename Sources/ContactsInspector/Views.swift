@@ -70,6 +70,17 @@ struct RootView: View {
         .sheet(item: Binding(get: { model.mergeIds.map { MergeRequest(ids: $0) } }, set: { model.mergeIds = $0?.ids })) { r in
             MergeSheet(ids: r.ids)
         }
+        .alert("Перевести имена в латиницу (\(model.pendingTranslit?.count ?? 0))?",
+               isPresented: Binding(get: { model.pendingTranslit != nil }, set: { if !$0 { model.pendingTranslit = nil } }),
+               presenting: model.pendingTranslit) { ids in
+            Button("Перевести") { Task { await model.transliterate(ids) } }
+                .keyboardShortcut(.defaultAction)
+            Button("Отмена", role: .cancel) {}
+        } message: { ids in
+            let lines = ids.prefix(15).compactMap { model.translitPreview($0) }.map { "\($0.from) → \($0.to)" }
+            Text(lines.joined(separator: "\n") + (ids.count > 15 ? "\n… и ещё \(ids.count - 15)" : "")
+                 + "\n\nКириллица будет заменена. Копии контактов сохранятся в истории.")
+        }
         .alert("Контакт с заметкой", isPresented: Binding(get: { model.noteBlockedContact != nil },
                                                           set: { if !$0 { model.noteBlockedContact = nil } }),
                presenting: model.noteBlockedContact) { id in
@@ -176,6 +187,8 @@ struct Sidebar: View {
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,
                            badge: model.contacts.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }.count)
+                SidebarRow(title: "Имя кириллицей", symbol: "character.textbox", filter: .cyrillicNames,
+                           badge: model.contacts.filter { model.hasCyrillicName($0.record) }.count)
                 SidebarRow(title: "Возможные дубли", symbol: "person.2.badge.gearshape", filter: .duplicates,
                            badge: model.duplicateIds.count)
                 SidebarRow(title: "Исправить связи Telegram", symbol: "link.badge.plus", filter: .tgNeedsFix,
@@ -289,15 +302,7 @@ struct ContactTable: View {
             Text("В контакты запишется ссылка Telegram в официальном формате (и username, если пользователь есть в ваших контактах Telegram), битые ссылки и старые профили будут убраны. Копии контактов сохранятся в истории.")
         }
         .contextMenu(forSelectionType: String.self) { ids in
-            if ids.count == 1, let id = ids.first {
-                Button("Изменить") { model.startEditing(id) }
-            }
-            if ids.count > 1 {
-                Button("Объединить (\(ids.count))…") { model.mergeIds = Array(ids) }
-            }
-            Button(ids.count > 1 ? "Удалить (\(ids.count))…" : "Удалить…", role: .destructive) {
-                model.confirmDelete(ids)
-            }
+            ContactMenuItems(ids: ids)
         } primaryAction: { ids in
             if ids.count == 1, let id = ids.first { model.startEditing(id) }
         }
@@ -680,4 +685,30 @@ extension View {
 struct MergeRequest: Identifiable {
     let ids: [String]
     var id: String { ids.joined(separator: ",") }
+}
+
+/// Пункты контекстного меню таблицы контактов Apple.
+struct ContactMenuItems: View {
+    @EnvironmentObject var model: AppModel
+    let ids: Set<String>
+
+    var body: some View {
+        if ids.count == 1, let id = ids.first {
+            Button("Изменить") { model.startEditing(id) }
+        }
+        if ids.count > 1 {
+            Button("Объединить (\(ids.count))…") { model.mergeIds = Array(ids) }
+        }
+        let cyr = cyrillicIds
+        if !cyr.isEmpty {
+            Button("Латиницей (\(cyr.count))…") { model.pendingTranslit = cyr }
+        }
+        Button(ids.count > 1 ? "Удалить (\(ids.count))…" : "Удалить…", role: .destructive) {
+            model.confirmDelete(ids)
+        }
+    }
+
+    private var cyrillicIds: [String] {
+        ids.filter { id in model.contact(id).map { model.hasCyrillicName($0.record) } ?? false }
+    }
 }
