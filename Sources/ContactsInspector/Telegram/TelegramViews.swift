@@ -324,7 +324,7 @@ struct TelegramEditSheet: View {
     }
 }
 
-/// Пункты контекстного меню (плоские — без вложенного Menu).
+/// Пункты «Автоудаление: …» контекстного меню таблицы Telegram.
 struct AutoDeleteMenuItems: View {
     @EnvironmentObject var tg: TelegramService
     let userIds: [Int64]

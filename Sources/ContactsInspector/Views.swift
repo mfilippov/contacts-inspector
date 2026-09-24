@@ -21,7 +21,6 @@ struct RootView: View {
                     }
                 }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
             case .loaded:
-                let _ = debugLog("RootView body: filter=\(String(describing: model.filter))")
                 NavigationSplitView {
                     Sidebar()
                 } detail: {
@@ -414,23 +413,6 @@ struct ContactRow: Identifiable {
         if !r.dates.isEmpty { extra.append("даты \(r.dates.count)") }
         self.extra = extra.joined(separator: ", ")
         account = r.containerId == "_local:ABAccount" ? "Mac" : "iCloud"
-    }
-}
-
-/// Мини-индикаторы «что заполнено» справа от имени в списке.
-struct FieldIcons: View {
-    let record: ContactRecord
-    private let shown: [Field] = [.phone, .email, .address, .birthday, .social, .note, .photo]
-
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(shown) { f in
-                Image(systemName: f.symbol)
-                    .font(.caption2)
-                    .foregroundStyle(f.count(record) > 0 ? Color.accentColor : Color.secondary.opacity(0.2))
-                    .help(f.title)
-            }
-        }
     }
 }
 

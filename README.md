@@ -9,6 +9,10 @@ It was built for moving from iPhone to Android: tidy up the address book before 
 - table of all contacts with columns, sorting, search, and filters by account, field, and problem;
 - field fill summary, contact card, full-size photo on click;
 - editing all fields, deleting (history of changes: a copy of the contact before each edit);
+- merging duplicates: "Possible duplicates" filter (shared phone, email, or first+last name), a merge window
+  with a choice of values, multi-value fields merged without repeats;
+- transliterating names to Latin ("Cyrillic name" filter, button in the form, bulk action):
+  Дмитрий Щукин → Dmitry Shchukin;
 - full backup (vCard with photos and notes, JSON, photos) to `~/Documents/Contacts Inspector Backups`
   with a list of backups inside the app.
 
@@ -19,6 +23,9 @@ It was built for moving from iPhone to Android: tidy up the address book before 
   (a URL with the `Telegram` label: `https://t.me/@id<ID>`); repairing broken links
   `t.me/@idId(rawValue: …)` left by Telegram in 2021–2022;
 - importing fields (name, phone, photo, birthday, bio) into an Apple contact, creating a contact from Telegram;
+- editing a Telegram contact's first name, last name, and note; "Name differs" filter (exact
+  field-by-field comparison with the Apple contact);
+- deleting linked contacts from both sides at once;
 - changing the auto-delete timer, deleting contacts from Telegram;
 - backing up Telegram contacts along with the rest of the backup.
 
@@ -52,14 +59,16 @@ to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API
 | History of changes | `~/Library/Application Support/ContactsInspector/history` |
 | TDLib database (encrypted) | `~/Library/Application Support/ContactsInspector/telegram` |
 | API keys and database key | Keychain, entry "Contacts Inspector — Telegram API" |
-| Debug log | `~/Library/Logs/ContactsInspector.log` |
+| Action and error log | `~/Library/Logs/ContactsInspector.log` |
 
 ## Known limitations
 
 - **Ad-hoc signing.** Without a Developer ID certificate, macOS asks for Contacts and Keychain
   access again after every build; on other Macs Gatekeeper blocks launch.
 - **Notes** are read and written through the Contacts app (AppleScript): Contacts.framework
-  does not return `note` without the `com.apple.developer.contacts.notes` entitlement.
+  does not return `note` without the `com.apple.developer.contacts.notes` entitlement, and it does not
+  save a modified contact that has a note (error 134092). So linking, deleting, and renaming
+  such contacts also go through Contacts.app, and to edit the other fields you first need to clear the note.
 - **macOS 27:** a `Button` inside a `ScrollView` that is the root of `.inspector` does not receive clicks,
   so the cards use `Form(.grouped)`. Minimal example: `repro/InspectorScrollButton`.
 - The UI is in Russian only for now.

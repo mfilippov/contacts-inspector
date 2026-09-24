@@ -29,9 +29,7 @@ struct FetchResult {
 
 func requestAccess(_ store: CNContactStore) async throws {
     let status = CNContactStore.authorizationStatus(for: .contacts)
-    debugLog("authorizationStatus = \(status.rawValue)")
     if status == .authorized { return }
-    debugLog("requestAccess…")
     // Если системный запрос не появился, requestAccess может ждать вечно — ограничиваем по времени.
     let granted = try await withThrowingTaskGroup(of: Bool?.self) { group in
         group.addTask { try await store.requestAccess(for: .contacts) }
@@ -66,7 +64,6 @@ func fetchAll(_ store: CNContactStore) throws -> FetchResult {
 
     var notesViaAPI = true
     var contacts: [CNContact]
-    debugLog("fetch with note…")
     do {
         contacts = try fetch(keys: baseKeys + [CNContactNoteKey as CNKeyDescriptor])
     } catch {
@@ -74,16 +71,10 @@ func fetchAll(_ store: CNContactStore) throws -> FetchResult {
         notesViaAPI = false
         contacts = try fetch(keys: baseKeys)
     }
-    debugLog("fetched \(contacts.count) contacts")
     // Без entitlement macOS может вернуть контакты без заметок, а обращение к .note бросит
     // NSException (Swift его не ловит). Проверяем явно.
     if notesViaAPI, let first = contacts.first, !first.isKeyAvailable(CNContactNoteKey) {
-        debugLog("note key not available after fetch")
         notesViaAPI = false
-    }
-    for key in [CNContactImageDataKey, CNContactThumbnailImageDataKey, CNContactImageDataAvailableKey,
-                CNContactDatesKey, CNContactNonGregorianBirthdayKey, CNContactRelationsKey] {
-        if let first = contacts.first, !first.isKeyAvailable(key) { debugLog("key not available: \(key)") }
     }
 
     let containers = try store.containers(matching: nil)
@@ -101,11 +92,6 @@ func fetchAll(_ store: CNContactStore) throws -> FetchResult {
                             predicate: CNContact.predicateForContactsInGroup(withIdentifier: group.identifier))
         for c in ids { groupsOf[c.identifier, default: []].append(group.identifier) }
     }
-    debugLog("containers \(containers.count), groups \(groups.count) mapped")
-    for c in containers {
-        debugLog("container name='\(c.name)' type=\(c.type.rawValue) id=\(c.identifier) contacts=\(containerOf.values.filter { $0 == c.identifier }.count)")
-    }
-    debugLog("default container = \(store.defaultContainerIdentifier())")
     return FetchResult(contacts: contacts, notesViaAPI: notesViaAPI, containers: containers,
                        groups: groups, containerOf: containerOf, groupsOf: groupsOf)
 }
@@ -122,7 +108,6 @@ func fetchNotesViaAppleScript() throws -> [String: String] {
     end tell
     return out
     """
-    debugLog("osascript notes…")
     let text = try runOSAScript(script).trimmingCharacters(in: .newlines)
     var notes: [String: String] = [:]
     for record in text.split(separator: "\u{1F}", omittingEmptySubsequences: true) {

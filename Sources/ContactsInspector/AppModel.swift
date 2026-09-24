@@ -40,9 +40,9 @@ final class AppModel: ObservableObject {
     @Published var containers: [CNContainer] = []
     @Published var groups: [CNGroup] = []
     @Published var notesSource = ""
-    @Published var filter: SidebarFilter? = .summary { didSet { debugLog("filter -> \(String(describing: filter))") } }
+    @Published var filter: SidebarFilter? = .summary
     @Published var search = ""
-    @Published var tableSelection = Set<String>() { didSet { debugLog("tableSelection -> \(tableSelection.count)") } }
+    @Published var tableSelection = Set<String>()
     @Published var showInspector = true
     /// Текущий порядок строк таблицы контактов (с учётом сортировки и фильтра) — задаёт ContactTable.
     var tableOrder: [String] = []
@@ -51,9 +51,7 @@ final class AppModel: ObservableObject {
     @Published var lastBackup: Date? = UserDefaults.standard.object(forKey: "lastBackup") as? Date
 
     @Published var editingId: String?
-    @Published var pendingDelete: Set<String>? {
-        didSet { if let p = pendingDelete { debugLog("confirm delete \(p.count)") } }
-    }
+    @Published var pendingDelete: Set<String>?
     @Published var errorMessage: String?
     /// Контакт с заметкой, который нельзя изменить через Contacts.framework (см. hasNote).
     @Published var noteBlockedContact: String?
@@ -92,7 +90,6 @@ final class AppModel: ObservableObject {
             self.notes = notes
             containers = result.containers
             groups = result.groups
-            debugLog("building records (notesViaAPI=\(result.notesViaAPI), notes=\(notes.count))")
             contacts = result.contacts.map { c in
                 let note = result.notesViaAPI ? (c.note.isEmpty ? nil : c.note) : notes[c.identifier]
                 return AppContact(
@@ -108,7 +105,7 @@ final class AppModel: ObservableObject {
             } else {
                 notesSource = "Заметки: через AppleScript (\(notes.count))"
             }
-            debugLog("loaded")
+            debugLog("loaded \(result.contacts.count) contacts")
             await refreshBackups()
             state = .loaded
         } catch {
@@ -120,7 +117,6 @@ final class AppModel: ObservableObject {
 // MARK: - Правка и удаление
 
     func startEditing(_ id: String) {
-        debugLog("startEditing")
         tableSelection = [id]
         editingId = id
         showInspector = true

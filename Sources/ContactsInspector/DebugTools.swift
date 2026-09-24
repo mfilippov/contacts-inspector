@@ -7,6 +7,8 @@ import AppKit
 ///                      snap            — снимок окна сейчас
 ///                      click X Y       — синтетический клик, точки от левого верхнего угла окна
 ///                      views X Y       — цепочка view под точкой
+///                      tree X Y        — элементы управления в прокрутке под точкой, с рамками
+///                      select 0,1      — выделить строки таблицы контактов по номерам
 @MainActor
 final class DebugTools {
     static let shared = DebugTools()
@@ -108,14 +110,6 @@ final class DebugTools {
                 let idx = parts[1].split(separator: ",").compactMap { Int($0) }
                 model.tableSelection = Set(idx.compactMap { model.tableOrder.indices.contains($0) ? model.tableOrder[$0] : nil })
                 debugLog("cmd select \(idx) -> \(model.tableSelection.count)")
-            case "merge":
-                guard let model else { continue }
-                model.mergeIds = Array(model.tableSelection)
-                debugLog("cmd merge \(model.tableSelection.count)")
-            case "filter":
-                guard let model, parts.count >= 2 else { continue }
-                model.filter = parts[1] == "duplicates" ? .duplicates : .all
-                debugLog("cmd filter \(parts[1])")
             case "click":
                 guard let p = point() else { continue }
                 debugLog("cmd click \(p)")

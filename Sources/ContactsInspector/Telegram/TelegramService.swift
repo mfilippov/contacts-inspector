@@ -326,12 +326,8 @@ final class TelegramService: ObservableObject {
 
     /// Запросы на подтверждение (диалоги показывает TelegramView).
     struct PendingAutoDelete: Identifiable { let id = UUID(); let userIds: [Int64]; let seconds: Int }
-    @Published var pendingAutoDelete: PendingAutoDelete? {
-        didSet { if let p = pendingAutoDelete { debugLog("confirm auto-delete \(p.seconds)s for \(p.userIds.count)") } }
-    }
-    @Published var pendingRemove: [TGUser]? {
-        didSet { if let p = pendingRemove { debugLog("confirm telegram remove \(p.count)") } }
-    }
+    @Published var pendingAutoDelete: PendingAutoDelete?
+    @Published var pendingRemove: [TGUser]?
     @Published var resultMessage: String?
 
     /// Прогресс массовой операции («Автоудаление: 3 из 20»), nil — ничего не выполняется.
@@ -445,9 +441,7 @@ final class TelegramService: ObservableObject {
         TGImportSource(user: u, full: await fullInfo(u.id), photo: await bigPhotoData(u))
     }
 
-    @Published var pendingCreate: [TGUser]? {
-        didSet { if let p = pendingCreate { debugLog("confirm create from telegram \(p.count)") } }
-    }
+    @Published var pendingCreate: [TGUser]?
 
     /// Данные крупного фото (для переноса в контакт Apple).
     func bigPhotoData(_ u: TGUser) async -> Data? {
@@ -467,7 +461,6 @@ final class TelegramService: ObservableObject {
         guard let client, auth == .ready else { return }
         let missing = users.filter { $0.photoFileId != nil && $0.photoPath == nil }
         guard !missing.isEmpty else { return }
-        debugLog("telegram photos to download: \(missing.count)")
         for batch in stride(from: 0, to: missing.count, by: 20).map({ Array(missing[$0..<min($0 + 20, missing.count)]) }) {
             let files = await withTaskGroup(of: (Int64, String?).self) { group in
                 for u in batch {
