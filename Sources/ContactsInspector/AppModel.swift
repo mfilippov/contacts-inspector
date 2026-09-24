@@ -27,6 +27,7 @@ enum SidebarFilter: Hashable {
     case duplicates         // возможные дубли (общий телефон, email или имя)
     case cyrillicNames      // имя, отчество или фамилия кириллицей
     case compare            // сравнение двух аккаунтов
+    case brokenPhoto        // «фото», которое не является изображением
 }
 
 enum LoadState: Equatable {
@@ -38,6 +39,8 @@ enum LoadState: Equatable {
 final class AppModel: ObservableObject {
     @Published var state: LoadState = .idle
     @Published var contacts: [AppContact] = []
+    /// Контакты, у которых в поле фото лежит не изображение.
+    @Published private(set) var brokenPhotoIds = Set<String>()
     @Published var containers: [CNContainer] = []
     @Published var groups: [CNGroup] = []
     @Published var notesSource = ""
@@ -108,6 +111,8 @@ final class AppModel: ObservableObject {
             } else {
                 notesSource = "Заметки: через AppleScript (\(notes.count))"
             }
+            brokenPhotoIds = Set(result.contacts.filter { $0.imageData != nil && !AccountCompare.isValidImage($0.imageData) }
+                .map(\.identifier))
             debugLog("loaded \(result.contacts.count) contacts; accounts: " + result.containers.map { c in
                 "\(displayName(c)) [type \(c.type.rawValue)] \(result.containerOf.values.filter { $0 == c.identifier }.count)"
             }.joined(separator: ", "))
@@ -744,6 +749,7 @@ final class AppModel: ObservableObject {
         case .missing(let f): list = list.filter { f.count($0.record) == 0 }
         case .tgNeedsFix: list = list.filter { TelegramLink.fixReason($0.record) != nil }
         case .cyrillicNames: list = list.filter { hasCyrillicName($0.record) }
+        case .brokenPhoto: list = list.filter { brokenPhotoIds.contains($0.id) }
         case .duplicates:
             let ids = DuplicateFinder.duplicateIds(contacts.map(\.record))
             list = list.filter { ids.contains($0.id) }

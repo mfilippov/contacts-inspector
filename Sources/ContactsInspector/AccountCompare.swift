@@ -1,5 +1,6 @@
 import Contacts
 import Foundation
+import ImageIO
 
 /// Сравнение контактов двух аккаунтов (например, iCloud и Google) и перенос в выбранную сторону.
 enum AccountCompare {
@@ -113,6 +114,14 @@ enum AccountCompare {
         m.instantMessageAddresses = fresh(s.instantMessageAddresses)
         m.contactRelations = fresh(s.contactRelations)
         m.dates = fresh(s.dates)
-        m.imageData = s.imageData
+        // Битое «фото» (не изображение — например, текст «Unable to read recordID») не переносим:
+        // iCloud отказывается его сохранять (134040). Фото получателя тогда остаётся как есть.
+        if s.imageData == nil || isValidImage(s.imageData) { m.imageData = s.imageData }
+    }
+
+    /// Можно ли декодировать данные как изображение.
+    static func isValidImage(_ data: Data?) -> Bool {
+        guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        return CGImageSourceGetCount(src) > 0 && CGImageSourceGetType(src) != nil
     }
 }

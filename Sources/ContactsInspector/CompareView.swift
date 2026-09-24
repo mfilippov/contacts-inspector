@@ -18,12 +18,14 @@ struct CompareView: View {
 
     enum Mode: String, CaseIterable { case differ = "Отличаются", onlyA = "Только в A", onlyB = "Только в B", same = "Совпадают" }
     enum Direction { case aToB, bToA }
+    enum Side { case a, b }
 
     @AppStorage("compareA") private var accountA = ""
     @AppStorage("compareB") private var accountB = ""
     @State private var mode = Mode.differ
     @State private var selection = Set<String>()
     @State private var pending: Direction?
+    @State private var pendingDelete: Side?
     @State private var sortOrder = [KeyPathComparator(\CompareRow.aName)]
 
     var body: some View {
@@ -57,6 +59,19 @@ struct CompareView: View {
         }
         .navigationTitle("Сравнение аккаунтов")
         .onAppear(perform: defaultAccounts)
+        .alert(deleteTitle(visible), isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
+            Button("Удалить", role: .destructive) {
+                if let side = pendingDelete {
+                    let ids = deleteIds(side, rows: visible)
+                    Task { await model.delete(Set(ids)); selection = [] }
+                }
+                pendingDelete = nil
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Отмена", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text(deleteMessage(visible))
+        }
         .alert(alertTitle(visible), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
             Button("Перенести") {
                 if let d = pending { Task { await apply(d, rows: visible) } }
@@ -92,6 +107,11 @@ struct CompareView: View {
                 Button("B → A (\(count(.bToA, rows: all[mode, default: []])))") { pending = .bToA }
                     .disabled(count(.bToA, rows: all[mode, default: []]) == 0)
                     .help("Сделать A таким же, как B")
+                Divider().frame(height: 16)
+                Button("Удалить в A (\(deleteIds(.a, rows: all[mode, default: []]).count))", role: .destructive) { pendingDelete = .a }
+                    .disabled(deleteIds(.a, rows: all[mode, default: []]).isEmpty)
+                Button("Удалить в B (\(deleteIds(.b, rows: all[mode, default: []]).count))", role: .destructive) { pendingDelete = .b }
+                    .disabled(deleteIds(.b, rows: all[mode, default: []]).isEmpty)
             }
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { m in Text("\(m.rawValue) (\(all[m, default: []].count))").tag(m) }
@@ -158,6 +178,23 @@ struct CompareView: View {
         model.resultMessage = "Перенесено: \(done)" + (failed.isEmpty ? "" :
             "\nНе удалось (\(failed.count)):\n" + failed.prefix(15).joined(separator: "\n")
             + (failed.count > 15 ? "\n… и ещё \(failed.count - 15)" : ""))
+    }
+
+    /// Контакты стороны A или B у строк, к которым применяется действие.
+    private func deleteIds(_ side: Side, rows: [CompareRow]) -> [String] {
+        targets(rows).compactMap { side == .a ? $0.a : $0.b }
+    }
+
+    private func deleteTitle(_ rows: [CompareRow]) -> String {
+        guard let side = pendingDelete else { return "" }
+        return "Удалить в «\(name(side == .a ? accountA : accountB))» (\(deleteIds(side, rows: rows).count))?"
+    }
+
+    private func deleteMessage(_ rows: [CompareRow]) -> String {
+        guard let side = pendingDelete else { return "" }
+        let names = deleteIds(side, rows: rows).compactMap { model.contact($0)?.record.displayName }.sorted()
+        return names.prefix(12).joined(separator: "\n") + (names.count > 12 ? "\n… и ещё \(names.count - 12)" : "")
+            + "\n\nКонтакты удалятся из этого аккаунта (и со всех устройств, где он подключён). Копии сохранятся в истории."
     }
 
     private func alertTitle(_ rows: [CompareRow]) -> String {

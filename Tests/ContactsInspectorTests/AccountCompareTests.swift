@@ -1,3 +1,4 @@
+import AppKit
 import Contacts
 import XCTest
 @testable import ContactsInspector
@@ -52,5 +53,24 @@ final class AccountCompareTests: XCTestCase {
         XCTAssertEqual(m.givenName, "Иван")
         XCTAssertEqual(m.phoneNumbers.first?.value.stringValue, "+79001234567")
         XCTAssertNotEqual(m.phoneNumbers.first?.identifier, src.phoneNumbers.first?.identifier)
+    }
+}
+
+final class ImageValidityTests: XCTestCase {
+    func testBrokenPhoto() {
+        XCTAssertFalse(AccountCompare.isValidImage(Data("Unable to read recordID".utf8)))
+        XCTAssertFalse(AccountCompare.isValidImage(nil))
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        XCTAssertTrue(AccountCompare.isValidImage(rep.representation(using: .png, properties: [:])))
+        XCTAssertTrue(AccountCompare.isValidImage(rep.representation(using: .jpeg, properties: [:])))
+    }
+
+    func testFillSkipsBrokenPhoto() {
+        let s = CNMutableContact(); s.imageData = Data("Unable to read recordID".utf8)
+        let m = CNMutableContact(); m.imageData = Data([0xFF, 0xD8, 0xFF])
+        AccountCompare.fill(m, from: s.copy() as! CNContact)
+        XCTAssertEqual(m.imageData, Data([0xFF, 0xD8, 0xFF]), "битое фото источника не затирает фото получателя")
     }
 }

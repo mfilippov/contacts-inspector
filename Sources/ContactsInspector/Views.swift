@@ -194,6 +194,8 @@ struct Sidebar: View {
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,
                            badge: model.contacts.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }.count)
+                SidebarRow(title: "Битое фото", symbol: "photo.badge.exclamationmark", filter: .brokenPhoto,
+                           badge: model.brokenPhotoIds.count)
                 SidebarRow(title: "Имя кириллицей", symbol: "character.textbox", filter: .cyrillicNames,
                            badge: model.contacts.filter { model.hasCyrillicName($0.record) }.count)
                 SidebarRow(title: "Возможные дубли", symbol: "person.2.badge.gearshape", filter: .duplicates,
