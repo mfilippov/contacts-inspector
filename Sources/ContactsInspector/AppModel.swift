@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
     @Published var editingId: String?
     @Published var pendingDelete: Set<String>?
     @Published var errorMessage: String?
+    /// Итог длинной операции (показывается окном).
+    @Published var resultMessage: String?
     /// Контакт с заметкой, который нельзя изменить через Contacts.framework (см. hasNote).
     @Published var noteBlockedContact: String?
     /// Контакты, выбранные для объединения (открывает окно объединения).
@@ -106,7 +108,9 @@ final class AppModel: ObservableObject {
             } else {
                 notesSource = "Заметки: через AppleScript (\(notes.count))"
             }
-            debugLog("loaded \(result.contacts.count) contacts")
+            debugLog("loaded \(result.contacts.count) contacts; accounts: " + result.containers.map { c in
+                "\(displayName(c)) [type \(c.type.rawValue)] \(result.containerOf.values.filter { $0 == c.identifier }.count)"
+            }.joined(separator: ", "))
             await refreshBackups()
             state = .loaded
         } catch {
@@ -396,50 +400,60 @@ final class AppModel: ObservableObject {
     }
 
     /// Создаёт копии контактов в другом аккаунте (со всеми полями, фото и заметкой).
-    func copyContacts(_ ids: [String], to container: String) async -> Int {
-        let sources = ids.compactMap { cnById[$0] }
-        guard !sources.isEmpty else { return 0 }
-        do {
-            let req = CNSaveRequest()
-            let created = sources.map { s -> CNMutableContact in
+    /// Каждый контакт — отдельным запросом: ошибка одного не останавливает остальные.
+    func copyContacts(_ ids: [String], to container: String) async -> (done: Int, failed: [String]) {
+        var done = 0
+        var failed: [String] = []
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+        let stamp = fmt.string(from: Date())
+        for s in ids.compactMap({ cnById[$0] }) {
+            let name = contact(s.identifier)?.record.displayName ?? s.identifier
+            do {
                 let m = CNMutableContact()
                 AccountCompare.fill(m, from: s)
+                let req = CNSaveRequest()
                 req.add(m, toContainerWithIdentifier: container)
-                return m
-            }
-            try store.execute(req)
-            for (s, m) in zip(sources, created) {
+                try store.execute(req)
                 if let note = contact(s.identifier)?.record.note, !note.isEmpty {
                     try setNoteViaAppleScript(contactId: m.identifier, note: note)
                 }
+                appendHistory(["\(stamp)\tcopy\t\(name)\t\(s.identifier) → \(m.identifier)"])
+                done += 1
+            } catch {
+                debugLog("copy \(name) (\(s.identifier)) to \(container) failed: \(error)")
+                failed.append("\(name): \(Self.shortError(error))")
             }
-            let fmt = DateFormatter()
-            fmt.dateFormat = "yyyy-MM-dd_HHmmss"
-            let stamp = fmt.string(from: Date())
-            appendHistory(zip(sources, created).map { "\(stamp)\tcopy\t\(contact($0.identifier)?.record.displayName ?? "")\t\($0.identifier) → \($1.identifier)" })
-            debugLog("copied \(created.count) contacts to \(container)")
-            await load(silent: true)
-            return created.count
-        } catch {
-            errorMessage = "Не удалось скопировать контакты: \(error)"
-            await load(silent: true)
-            return 0
         }
+        debugLog("copied \(done), failed \(failed.count)")
+        await load(silent: true)
+        return (done, failed)
     }
 
-    /// Перезаписывает контакты target содержимым source (пары из разных аккаунтов). Копии target — в историю.
-    func overwrite(_ pairs: [(target: String, source: String)]) async -> Int {
+    /// Перезаписывает контакты target содержимым source (пары из разных аккаунтов) — точная копия,
+    /// включая удаление заметки и фото, которых нет в источнике. Копии target — в историю.
+    func overwrite(_ pairs: [(target: String, source: String)]) async -> (done: Int, failed: [String]) {
         let items = pairs.compactMap { p in cnById[p.target].flatMap { t in cnById[p.source].map { (t, $0) } } }
-        guard !items.isEmpty else { return 0 }
+        guard !items.isEmpty else { return (0, []) }
         var done = 0
-        do {
-            try archive(items.map(\.0), action: "overwrite")
-            for (t, s) in items {
-                let targetNote = contact(t.identifier)?.record.note ?? ""
-                let sourceNote = contact(s.identifier)?.record.note ?? ""
-                // контакт с заметкой Contacts.framework не сохраняет (134092): сначала очищаем заметку
-                if !targetNote.isEmpty { try setNoteViaAppleScript(contactId: t.identifier, note: "") }
-                let m = t.mutableCopy() as! CNMutableContact
+        var failed: [String] = []
+        do { try archive(items.map(\.0), action: "overwrite") } catch {
+            errorMessage = "Не удалось сохранить копии в историю, ничего не изменено: \(error)"
+            return (0, [])
+        }
+        for (t, s) in items {
+            let name = contact(t.identifier)?.record.displayName ?? t.identifier
+            let targetNote = contact(t.identifier)?.record.note ?? ""
+            let sourceNote = contact(s.identifier)?.record.note ?? ""
+            do {
+                // у контакта с заметкой Contacts.framework не заменяет многозначные поля (134092):
+                // заметку убираем целиком, перечитываем контакт, сохраняем, затем пишем заметку источника
+                var fresh = t
+                if !targetNote.isEmpty {
+                    try setNoteViaAppleScript(contactId: t.identifier, note: "")
+                    fresh = try refetch(t.identifier)
+                }
+                let m = fresh.mutableCopy() as! CNMutableContact
                 AccountCompare.fill(m, from: s)
                 let req = CNSaveRequest()
                 req.update(m)
@@ -449,13 +463,33 @@ final class AppModel: ObservableObject {
                 }
                 if !sourceNote.isEmpty { try setNoteViaAppleScript(contactId: t.identifier, note: sourceNote) }
                 done += 1
+            } catch {
+                debugLog("overwrite \(name) (\(t.identifier)) failed: \(error)")
+                failed.append("\(name): \(Self.shortError(error))")
             }
-            debugLog("overwrote \(done) contacts")
-        } catch {
-            errorMessage = "Не удалось перенести (готово \(done) из \(items.count)): \(error)"
         }
+        debugLog("overwrote \(done), failed \(failed.count)")
         await load(silent: true)
-        return done
+        return (done, failed)
+    }
+
+    /// Заново читает контакт из базы (например, после удаления заметки через Contacts.app):
+    /// у объекта, прочитанного раньше, заметка ещё есть, и сохранить его Contacts.framework не даст (134092).
+    func refetch(_ id: String) throws -> CNContact {
+        let req = CNContactFetchRequest(keysToFetch: baseKeys)
+        req.predicate = CNContact.predicateForContacts(withIdentifiers: [id])
+        req.unifyResults = false
+        var found: CNContact?
+        try store.enumerateContacts(with: req) { c, stop in found = c; stop.pointee = true }
+        guard let found else { throw ToolError("Контакт \(id) не найден") }
+        return found
+    }
+
+    /// Коротко об ошибке для сводки: код и суть без длинного UserInfo.
+    static func shortError(_ error: Error) -> String {
+        let e = error as NSError
+        if e.code == 134092 { return "заметка (134092)" }
+        return "\(e.domain) \(e.code)"
     }
 
     // MARK: - Транслитерация
@@ -516,10 +550,15 @@ final class AppModel: ObservableObject {
         let oldNote = contact(primaryId)?.record.note ?? ""
         do {
             try archive([primary] + others, action: "merge")
-            let m = ContactMerge.build(primary: primary, others: others, scalars: scalars, birthday: birthday,
-                                       imageFrom: imageFrom.flatMap { cnById[$0] }, keep: keep)
             // Contacts.framework не сохраняет контакт с заметкой (134092): сначала убираем заметку
-            if !oldNote.isEmpty { try setNoteViaAppleScript(contactId: primaryId, note: "") }
+            // и строим объединённый контакт на свежем объекте из базы
+            var base = primary
+            if !oldNote.isEmpty {
+                try setNoteViaAppleScript(contactId: primaryId, note: "")
+                base = try refetch(primaryId)
+            }
+            let m = ContactMerge.build(primary: base, others: others, scalars: scalars, birthday: birthday,
+                                       imageFrom: imageFrom.flatMap { cnById[$0] }, keep: keep)
             do {
                 let req = CNSaveRequest()
                 req.update(m)

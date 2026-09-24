@@ -90,6 +90,12 @@ struct RootView: View {
         } message: { _ in
             Text("macOS не даёт приложению без специального разрешения Apple сохранять контакты с заметкой. Связь с Telegram и удаление для таких контактов работают через «Контакты», а поля отредактируйте в самих «Контактах».")
         }
+        .alert("Готово", isPresented: Binding(get: { model.resultMessage != nil },
+                                             set: { if !$0 { model.resultMessage = nil } })) {
+            Button("OK") { model.resultMessage = nil }
+        } message: {
+            Text(model.resultMessage ?? "")
+        }
         .alert("Ошибка", isPresented: Binding(get: { model.errorMessage != nil },
                                              set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }

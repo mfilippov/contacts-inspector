@@ -66,9 +66,10 @@ to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API
 - **Ad-hoc signing.** Without a Developer ID certificate, macOS asks for Contacts and Keychain
   access again after every build; on other Macs Gatekeeper blocks launch.
 - **Notes** are read and written through the Contacts app (AppleScript): Contacts.framework
-  does not return `note` without the `com.apple.developer.contacts.notes` entitlement, and it does not
-  save a modified contact that has a note (error 134092). So linking, deleting, and renaming
-  such contacts also go through Contacts.app, and to edit the other fields you first need to clear the note.
+  does not return `note` without the `com.apple.developer.contacts.notes` entitlement, and it cannot
+  replace multi-value fields (phones, email, URLs, profiles) of a contact whose note
+  exists, even an empty one (error 134092). A note is therefore deleted entirely (`missing value`), not
+  written as an empty string; when transferring and merging, the recipient's note is temporarily removed and then restored.
 - **macOS 27:** a `Button` inside a `ScrollView` that is the root of `.inspector` does not receive clicks,
   so the cards use `Form(.grouped)`. Minimal example: `repro/InspectorScrollButton`.
 - The UI is in Russian only for now.

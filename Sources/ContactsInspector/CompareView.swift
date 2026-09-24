@@ -149,10 +149,15 @@ struct CompareView: View {
             d == .aToB ? (r.b == nil ? r.a : nil) : (r.a == nil ? r.b : nil)
         }
         var done = 0
-        if !pairs.isEmpty { done += await model.overwrite(pairs) }
-        if !copies.isEmpty { done += await model.copyContacts(copies, to: target) }
+        var failed: [String] = []
+        if !pairs.isEmpty { let r = await model.overwrite(pairs); done += r.done; failed += r.failed }
+        if !copies.isEmpty { let r = await model.copyContacts(copies, to: target); done += r.done; failed += r.failed }
         selection = []
-        debugLog("compare apply \(d == .aToB ? "A→B" : "B→A"): \(done)")
+        debugLog("compare apply \(d == .aToB ? "A→B" : "B→A"): \(done), failed \(failed.count)")
+        model.backupMessage = nil
+        model.resultMessage = "Перенесено: \(done)" + (failed.isEmpty ? "" :
+            "\nНе удалось (\(failed.count)):\n" + failed.prefix(15).joined(separator: "\n")
+            + (failed.count > 15 ? "\n… и ещё \(failed.count - 15)" : ""))
     }
 
     private func alertTitle(_ rows: [CompareRow]) -> String {

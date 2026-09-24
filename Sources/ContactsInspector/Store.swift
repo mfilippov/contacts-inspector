@@ -120,12 +120,19 @@ func fetchNotesViaAppleScript() throws -> [String: String] {
 }
 
 /// Записывает заметку через Contacts.app (API не даёт писать note без entitlement).
+/// Пустая заметка удаляется целиком (missing value), а не записывается пустой строкой: Contacts.framework
+/// без entitlement не может заменить многозначные поля (телефоны, email, …) у контакта, у которого
+/// заметка существует, даже пустая (NSCocoaErrorDomain 134092); с удалённой заметкой — может.
 func setNoteViaAppleScript(contactId: String, note: String) throws {
     let script = """
     on run argv
         tell application "Contacts"
             set p to person id (item 1 of argv)
-            set note of p to (item 2 of argv)
+            if (item 2 of argv) is "" then
+                set note of p to missing value
+            else
+                set note of p to (item 2 of argv)
+            end if
             save
         end tell
     end run
