@@ -109,3 +109,35 @@ final class BrokenLinkTests: XCTestCase {
         XCTAssertEqual(unlinked.urlAddresses.map { $0.value as String }, ["https://example.com"])
     }
 }
+
+final class NameDiffTests: XCTestCase {
+    private func record(_ given: String, _ family: String) -> ContactRecord {
+        let json: [String: Any] = [
+            "identifier": "x", "groupIds": [], "contactType": "person", "namePrefix": "", "givenName": given,
+            "middleName": "", "familyName": family, "previousFamilyName": "", "nameSuffix": "", "nickname": "",
+            "phoneticGivenName": "", "phoneticMiddleName": "", "phoneticFamilyName": "", "phoneticOrganizationName": "",
+            "organizationName": "", "departmentName": "", "jobTitle": "", "dates": [], "phoneNumbers": [],
+            "emailAddresses": [], "urlAddresses": [], "relations": [], "postalAddresses": [],
+            "instantMessageAddresses": [], "socialProfiles": [], "hasImage": false,
+        ]
+        return try! JSONDecoder().decode(ContactRecord.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+    private func user(_ first: String, _ last: String) -> TGUser {
+        TGUser(id: 1, firstName: first, lastName: last, phone: "", usernames: [], isMutual: true)
+    }
+
+    func testSameNames() {
+        XCTAssertFalse(TelegramLink.namesDiffer(apple: record("Иван", "Петров"), telegram: user("Иван", "Петров")))
+
+    }
+
+    func testDifferentNames() {
+        XCTAssertTrue(TelegramLink.namesDiffer(apple: record("Иван", "Петров"), telegram: user("Иван Петров", "")),
+                      "полное имя одной строкой — расхождение")
+        XCTAssertTrue(TelegramLink.namesDiffer(apple: record("Иван", "Петров"), telegram: user("Петров", "Иван")))
+        XCTAssertTrue(TelegramLink.namesDiffer(apple: record("Иван", "Петров"), telegram: user("иван", "петров")))
+        XCTAssertTrue(TelegramLink.namesDiffer(apple: record("Ivan", ""), telegram: user("Ivan", "Petrov")))
+        XCTAssertTrue(TelegramLink.namesDiffer(apple: record("Иван ", "Петров"), telegram: user("Иван", "Петров")),
+                      "лишний пробел — тоже расхождение")
+    }
+}

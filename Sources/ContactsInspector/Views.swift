@@ -167,6 +167,8 @@ struct Sidebar: View {
                            badge: statuses.filter(\.isSuggested).count)
                 SidebarRow(title: "Без Telegram", symbol: "minus.circle", filter: .tgNone,
                            badge: statuses.filter { $0 == .none }.count)
+                SidebarRow(title: "Имя отличается", symbol: "person.text.rectangle", filter: .tgNameDiffers,
+                           badge: model.contacts.filter { model.nameDiffersFromTelegram($0.record, matcher: m) }.count)
             }
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,

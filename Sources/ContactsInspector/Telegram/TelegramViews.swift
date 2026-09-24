@@ -429,7 +429,9 @@ private struct TelegramContactsTable: View {
     @State private var showCard = true
     @State private var chatFilter = ChatFilter.all
 
-    enum ChatFilter: String, CaseIterable { case all = "Все", withChat = "С чатом", autoDelete = "С автоудалением" }
+    enum ChatFilter: String, CaseIterable {
+        case all = "Все", withChat = "С чатом", autoDelete = "С автоудалением", nameDiffers = "Имя отличается"
+    }
 
     var body: some View {
         let rows = makeRows().filter { r in
@@ -437,6 +439,9 @@ private struct TelegramContactsTable: View {
             case .all: true
             case .withChat: r.chat?.hasDialog == true
             case .autoDelete: r.autoDelete > 0
+            case .nameDiffers: r.appleIds.contains { id in
+                model.contact(id).map { TelegramLink.namesDiffer(apple: $0.record, telegram: r.user) } ?? false
+            }
             }
         }.sorted(using: sortOrder)
         let plan = model.telegramSyncPlan()

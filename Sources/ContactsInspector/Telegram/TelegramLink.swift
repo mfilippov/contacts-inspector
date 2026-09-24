@@ -154,6 +154,13 @@ enum TelegramLink {
                                                                  userIdentifier: String(u.id), service: service))
     }
 
+    /// Различаются ли имя и фамилия в Apple и Telegram — точно, символ в символ (включая пробелы и регистр).
+    /// Отчество Apple, если есть, присоединяется к имени через пробел: в Telegram отдельного поля нет.
+    static func namesDiffer(apple r: ContactRecord, telegram u: TGUser) -> Bool {
+        let appleFirst = r.middleName.isEmpty ? r.givenName : r.givenName + " " + r.middleName
+        return appleFirst != u.firstName || r.familyName != u.lastName
+    }
+
     /// Ключ для сравнения телефонов: последние 10 цифр; российская «8» в начале → «7».
     static func phoneKey(_ s: String) -> String? {
         var digits = s.filter(\.isASCII).filter(\.isNumber)

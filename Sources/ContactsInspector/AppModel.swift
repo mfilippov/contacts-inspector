@@ -23,6 +23,7 @@ enum SidebarFilter: Hashable {
     case tgSuggested        // можно связать по телефону
     case tgNone             // без Telegram
     case tgNeedsFix         // связь с Telegram нужно исправить
+    case tgNameDiffers      // связан, но имя отличается от Telegram
 }
 
 enum LoadState: Equatable {
@@ -379,6 +380,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Связан с пользователем из контактов Telegram, и имена различаются.
+    func nameDiffersFromTelegram(_ r: ContactRecord, matcher m: TelegramMatcher) -> Bool {
+        if case .linked(_, _, let u?, _) = m.status(r) { return TelegramLink.namesDiffer(apple: r, telegram: u) }
+        return false
+    }
+
     /// Пользователи Telegram (из ваших контактов Telegram), связанные с этими контактами Apple.
     func linkedTelegramUsers(_ appleIds: Set<String>) -> [TGUser] {
         let m = matcher
@@ -529,6 +536,9 @@ final class AppModel: ObservableObject {
         case .has(let f): list = list.filter { f.count($0.record) > 0 }
         case .missing(let f): list = list.filter { f.count($0.record) == 0 }
         case .tgNeedsFix: list = list.filter { TelegramLink.fixReason($0.record) != nil }
+        case .tgNameDiffers:
+            let m = matcher
+            list = list.filter { nameDiffersFromTelegram($0.record, matcher: m) }
         case .noPhoneNoEmail: list = list.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }
         }
         let q = search.trimmingCharacters(in: .whitespaces)
