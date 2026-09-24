@@ -9,6 +9,7 @@ import AppKit
 ///                      views X Y       — цепочка view под точкой
 ///                      tree X Y        — элементы управления в прокрутке под точкой, с рамками
 ///                      select 0,1      — выделить строки таблицы контактов по номерам
+///                      winfo           — рамка окна и её ограничения; grow N — увеличить высоту на N
 @MainActor
 final class DebugTools {
     static let shared = DebugTools()
@@ -110,6 +111,14 @@ final class DebugTools {
                 let idx = parts[1].split(separator: ",").compactMap { Int($0) }
                 model.tableSelection = Set(idx.compactMap { model.tableOrder.indices.contains($0) ? model.tableOrder[$0] : nil })
                 debugLog("cmd select \(idx) -> \(model.tableSelection.count)")
+            case "winfo":
+                debugLog("cmd winfo frame=\(win.frame) min=\(win.minSize) max=\(win.maxSize) contentMin=\(win.contentMinSize) contentMax=\(win.contentMaxSize) resizable=\(win.styleMask.contains(.resizable)) visible=\(win.screen?.visibleFrame ?? .zero)")
+            case "grow":
+                // grow N — попытаться увеличить высоту окна на N точек вверх
+                let n = Double(parts.count > 1 ? parts[1] : "100") ?? 100
+                var f = win.frame; f.size.height += n
+                win.setFrame(f, display: true)
+                debugLog("cmd grow \(n) -> \(win.frame)")
             case "click":
                 guard let p = point() else { continue }
                 debugLog("cmd click \(p)")
