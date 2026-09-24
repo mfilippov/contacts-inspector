@@ -27,7 +27,7 @@ struct EditContactView: View {
                 Spacer()
                 Button("Сохранить") {
                     saving = true
-                    Task { _ = await model.save(edit, id: id); saving = false }
+                    Task { _ = await model.save(edit, original: original, id: id); saving = false }
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .buttonStyle(.borderedProminent)

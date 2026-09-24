@@ -60,6 +60,15 @@ struct RootView: View {
         } message: {
             Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории.")
         }
+        .alert("Контакт с заметкой", isPresented: Binding(get: { model.noteBlockedContact != nil },
+                                                          set: { if !$0 { model.noteBlockedContact = nil } }),
+               presenting: model.noteBlockedContact) { id in
+            Button("Открыть в Контактах") { model.openInContacts(id) }
+                .keyboardShortcut(.defaultAction)
+            Button("Отмена", role: .cancel) {}
+        } message: { _ in
+            Text("macOS не даёт приложению без специального разрешения Apple сохранять контакты с заметкой. Связь с Telegram и удаление для таких контактов работают через «Контакты», а поля отредактируйте в самих «Контактах».")
+        }
         .alert("Ошибка", isPresented: Binding(get: { model.errorMessage != nil },
                                              set: { if !$0 { model.errorMessage = nil } })) {
             Button("OK") { model.errorMessage = nil }

@@ -148,6 +148,71 @@ func setNoteViaAppleScript(contactId: String, note: String) throws {
     _ = try runOSAScript(script, args: [contactId, note])
 }
 
+/// Прописывает (url != "") или убирает связь с Telegram через Contacts.app — для контактов с заметкой:
+/// Contacts.framework без entitlement на заметки не может сохранить такой контакт (ошибка 134092).
+/// Удаляются: наши URL «https://t.me/@id…», битые «…@idId(rawValue…», наши соцпрофили Telegram
+/// (с числовым ID, с tg://-ссылкой или пустые). Чужие профили Telegram не трогаются.
+func setTelegramLinkViaAppleScript(contactId: String, officialURL: String, username: String, userId: String) throws {
+    let script = """
+    on run argv
+        set pid to item 1 of argv
+        set newURL to item 2 of argv
+        set uname to item 3 of argv
+        set uid to item 4 of argv
+        tell application "Contacts"
+            set p to person id pid
+            set us to urls of p
+            repeat with i from (count of us) to 1 by -1
+                set v to value of item i of us as text
+                if v starts with "https://t.me/@id" then delete item i of us
+            end repeat
+            set sps to social profiles of p
+            repeat with i from (count of sps) to 1 by -1
+                set sp to item i of sps
+                if (service name of sp as text) is "Telegram" then
+                    set ours to false
+                    set ui to user identifier of sp
+                    if ui is not missing value then
+                        try
+                            set n to (ui as number)
+                            set ours to true
+                        end try
+                    end if
+                    set ul to url of sp
+                    if ul is not missing value then
+                        if (ul as text) starts with "tg:" then set ours to true
+                    end if
+                    set un to user name of sp
+                    if (un is missing value or un is "") and ul is missing value then set ours to true
+                    if ours then delete sp
+                end if
+            end repeat
+            if newURL is not "" then
+                make new url at end of urls of p with properties {label:"Telegram", value:newURL}
+                if uname is not "" then
+                    make new social profile at end of social profiles of p with properties {service name:"Telegram", user name:uname, user identifier:uid, url:"https://t.me/" & uname}
+                end if
+            end if
+            save
+        end tell
+    end run
+    """
+    _ = try runOSAScript(script, args: [contactId, officialURL, username, userId])
+}
+
+/// Удаляет контакт через Contacts.app (для контактов с заметкой, см. выше).
+func deleteContactViaAppleScript(contactId: String) throws {
+    let script = """
+    on run argv
+        tell application "Contacts"
+            delete person id (item 1 of argv)
+            save
+        end tell
+    end run
+    """
+    _ = try runOSAScript(script, args: [contactId])
+}
+
 func runOSAScript(_ script: String, args: [String] = []) throws -> String {
     let proc = Process()
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")

@@ -52,6 +52,8 @@ final class AppModel: ObservableObject {
         didSet { if let p = pendingDelete { debugLog("confirm delete \(p.count)") } }
     }
     @Published var errorMessage: String?
+    /// Контакт с заметкой, который нельзя изменить через Contacts.framework (см. hasNote).
+    @Published var noteBlockedContact: String?
 
     /// Сервис Telegram (задаётся при старте приложения); нужен для фильтров и сопоставления.
     weak var telegram: TelegramService?
@@ -123,24 +125,45 @@ final class AppModel: ObservableObject {
     }
 
     /// Сохраняет правки. Перед записью исходная версия уходит в историю.
-    func save(_ edit: EditableContact, id: String) async -> Bool {
+    /// original — состояние формы при открытии (для определения, что именно изменилось).
+    func save(_ edit: EditableContact, original: EditableContact, id: String) async -> Bool {
         guard let c = cnById[id] else { errorMessage = "Контакт не найден — обновите список"; return false }
+        let oldNote = contact(id)?.record.note ?? ""
+        let noteChanged = edit.note != oldNote
+        let viaAPI = fetchResult?.notesViaAPI == true
+        // изменилось ли что-то кроме заметки
+        var withoutNote = edit
+        withoutNote.note = oldNote
+        var originalWithoutNote = original
+        originalWithoutNote.note = oldNote
+        let fieldsChanged = withoutNote != originalWithoutNote
+        // Контакт с заметкой Contacts.framework не сохраняет (134092); заметку пишем через Contacts.app,
+        // а поля — только если заметку при этом очищают.
+        if !viaAPI, !oldNote.isEmpty, fieldsChanged, !edit.note.isEmpty {
+            noteBlockedContact = id
+            return false
+        }
         do {
-            let oldNote = contact(id)?.record.note ?? ""
-            let m = try edit.apply(to: c)
-            let noteChanged = edit.note != oldNote
-            if noteChanged, fetchResult?.notesViaAPI == true { m.note = edit.note }
             try archive([c], action: "edit")
-            let req = CNSaveRequest()
-            req.update(m)
-            try store.execute(req)
-            if noteChanged, fetchResult?.notesViaAPI != true {
+            if noteChanged, !viaAPI {
                 try setNoteViaAppleScript(contactId: id, note: edit.note)
             }
-            debugLog("saved \(id)")
+            if fieldsChanged || (noteChanged && viaAPI) {
+                let m = try edit.apply(to: c)
+                if noteChanged, viaAPI { m.note = edit.note }
+                let req = CNSaveRequest()
+                req.update(m)
+                try store.execute(req)
+            }
+            debugLog("saved \(id) (fields: \(fieldsChanged), note: \(noteChanged))")
             editingId = nil
             await load(silent: true)
             return true
+        } catch let e as NSError where e.code == 134092 {
+            debugLog("save blocked by note: \(id)")
+            await load(silent: true)
+            noteBlockedContact = id
+            return false
         } catch {
             debugLog("save failed: \(error)")
             errorMessage = "Не удалось сохранить: \(error)"
@@ -157,10 +180,14 @@ final class AppModel: ObservableObject {
         guard !contacts.isEmpty else { return }
         do {
             try archive(contacts, action: "delete")
-            let req = CNSaveRequest()
-            for c in contacts { req.delete(c.mutableCopy() as! CNMutableContact) }
+            let (withNote, plain) = split(contacts)
             let next = nextSelection(removing: ids, order: tableOrder)
-            try store.execute(req)
+            if !plain.isEmpty {
+                let req = CNSaveRequest()
+                for c in plain { req.delete(c.mutableCopy() as! CNMutableContact) }
+                try store.execute(req)
+            }
+            for c in withNote { try deleteContactViaAppleScript(contactId: c.identifier) }
             debugLog("deleted \(contacts.count)")
             await load(silent: true)
             tableSelection = next.map { [$0] } ?? []
@@ -222,19 +249,46 @@ final class AppModel: ObservableObject {
         guard !pairs.isEmpty else { return }
         do {
             try archive(pairs.map(\.0), action: "telegram")
-            let req = CNSaveRequest()
-            for (c, user) in pairs {
-                let m = c.mutableCopy() as! CNMutableContact
-                TelegramLink.setLink(m, from: c, user: user)
-                req.update(m)
-            }
-            try store.execute(req)
+            try writeLinks(pairs)
             debugLog("telegram links: \(pairs.count)")
             await load(silent: true)
         } catch {
             debugLog("telegram links failed: \(error)")
             errorMessage = "Не удалось записать связи с Telegram: \(error)"
         }
+    }
+
+    /// Contacts.framework без entitlement на заметки не сохраняет изменённый контакт с непустой заметкой
+    /// (NSCocoaErrorDomain 134092 при «faulting» заметки). Такие контакты меняем через Contacts.app.
+    func hasNote(_ id: String) -> Bool { contact(id)?.record.note?.isEmpty == false }
+
+    private func split(_ contacts: [CNContact]) -> (withNote: [CNContact], plain: [CNContact]) {
+        (contacts.filter { hasNote($0.identifier) }, contacts.filter { !hasNote($0.identifier) })
+    }
+
+    /// Записывает связи: обычные контакты — одним CNSaveRequest, контакты с заметкой — через Contacts.app.
+    private func writeLinks(_ pairs: [(CNContact, TGUser?)]) throws {
+        let plain = pairs.filter { !hasNote($0.0.identifier) }
+        if !plain.isEmpty {
+            let req = CNSaveRequest()
+            for (c, user) in plain {
+                let m = c.mutableCopy() as! CNMutableContact
+                TelegramLink.setLink(m, from: c, user: user)
+                req.update(m)
+            }
+            try store.execute(req)
+        }
+        for (c, user) in pairs where hasNote(c.identifier) {
+            try setTelegramLinkViaAppleScript(contactId: c.identifier,
+                                              officialURL: user.map { TelegramLink.officialURL($0.id) } ?? "",
+                                              username: user?.username ?? "",
+                                              userId: user.map { String($0.id) } ?? "")
+        }
+    }
+
+    /// Открывает контакт в приложении «Контакты».
+    func openInContacts(_ id: String) {
+        if let url = URL(string: "addressbook://\(id)") { NSWorkspace.shared.open(url) }
     }
 
     /// Контакты, у которых связь с Telegram нужно исправить (битые ссылки, старый формат).
@@ -252,15 +306,10 @@ final class AppModel: ObservableObject {
         let known = Dictionary((telegram?.users ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         do {
             try archive(targets.map(\.0), action: "telegram-fix")
-            let req = CNSaveRequest()
-            for (c, tgId) in targets {
-                let m = c.mutableCopy() as! CNMutableContact
-                let user = known[tgId] ?? TGUser(id: tgId, firstName: "", lastName: "", phone: "", usernames: [],
-                                                 isMutual: false)
-                TelegramLink.setLink(m, from: c, user: user)
-                req.update(m)
-            }
-            try store.execute(req)
+            try writeLinks(targets.map { c, tgId in
+                (c, Optional(known[tgId] ?? TGUser(id: tgId, firstName: "", lastName: "", phone: "", usernames: [],
+                                                   isMutual: false)))
+            })
             debugLog("fixed telegram links: \(targets.count)")
             await load(silent: true)
         } catch {
@@ -271,6 +320,7 @@ final class AppModel: ObservableObject {
     /// Переносит выбранные поля из Telegram в контакт Apple (и прописывает связь).
     func importFromTelegram(contactId: String, fields: Set<TGImportField>, source: TGImportSource) async {
         guard let c = cnById[contactId] else { errorMessage = "Контакт не найден — обновите список"; return }
+        if hasNote(contactId) { noteBlockedContact = contactId; return }
         do {
             try archive([c], action: "telegram-import")
             let req = CNSaveRequest()
