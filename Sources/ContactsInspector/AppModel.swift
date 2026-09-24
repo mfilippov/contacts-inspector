@@ -435,6 +435,7 @@ final class AppModel: ObservableObject {
             return AppContact(record: r, thumbnail: c.thumbnail ?? data, image: data)
         }
         brokenPhotoIds = Set(contacts.map(\.id).filter { id in photo(id) != nil && !AccountCompare.isValidImage(photo(id)) })
+        computeDisplayPhotos()
     }
 
     private var photoHashCache: [String: UInt64?] = [:]
@@ -445,6 +446,41 @@ final class AppModel: ObservableObject {
         let h = AccountCompare.photoHash(photo(id))
         photoHashCache[id] = h
         return h
+    }
+
+    /// Аккаунт Google: Mac не получает из Google фото контактов (они уходят на сервер, но обратно не приходят),
+    /// поэтому отсутствие фото у Google-контакта на Mac ничего не говорит о фото в самом Google.
+    func isGoogle(_ container: String?) -> Bool {
+        guard let container, let c = containers.first(where: { $0.identifier == container }) else { return false }
+        return displayName(c).localizedCaseInsensitiveContains("google")
+    }
+
+    /// Для показа: Google-контакт без фото на Mac → id контакта-пары из другого аккаунта, у которого фото есть.
+    @Published private(set) var displayPhotoSource: [String: String] = [:]
+
+    /// Фото для показа в таблице и карточке (не используется для переноса и сравнения).
+    func displayPhoto(_ id: String) -> Data? {
+        photo(id) ?? displayPhotoSource[id].flatMap { photo($0) }
+    }
+
+    /// Сопоставляет Google-контакты без фото на Mac с контактами других аккаунтов (как в «Сравнении»).
+    private func computeDisplayPhotos() {
+        var map: [String: String] = [:]
+        let google = containers.map(\.identifier).filter { isGoogle($0) }
+        for g in google {
+            let gRecords = records(in: g).filter { photo($0.identifier) == nil }
+            guard !gRecords.isEmpty else { continue }
+            for other in containers.map(\.identifier) where other != g && !isGoogle(other) {
+                let m = AccountCompare.match(gRecords, records(in: other))
+                for p in m.pairs where map[p.a] == nil && photo(p.b) != nil { map[p.a] = p.b }
+            }
+        }
+        displayPhotoSource = map
+    }
+
+    /// Фото контакта не видно с Mac (Google-аккаунт и локально фото нет).
+    func photoHiddenOnMac(_ id: String) -> Bool {
+        photo(id) == nil && isGoogle(contact(id)?.record.containerId)
     }
 
     func records(in container: String) -> [ContactRecord] {

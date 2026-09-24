@@ -81,6 +81,9 @@ to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API
   are read through Contacts.app (vCard) in the background after load, which takes ~10 s.
 - **Google via CardDAV** stores social profiles lossily (drops the ID and URL, changes the case of the username)
   and drops profiles that have no username.
+- **Google photos are not visible from the Mac:** photos are uploaded to Google (they show on contacts.google.com),
+  but they do not come back to the Mac. In the table, such contacts show their pair's photo from another account,
+  and comparison does not treat a photo "invisible from the Mac" as a difference.
 - **macOS 27:** a `Button` inside a `ScrollView` that is the root of `.inspector` does not receive clicks,
   so the cards use `Form(.grouped)`. Minimal example: `repro/InspectorScrollButton`.
 - The UI is in Russian only for now.

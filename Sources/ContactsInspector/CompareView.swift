@@ -153,7 +153,8 @@ struct CompareView: View {
             guard let ra = byId[p.a], let rb = byId[p.b] else { continue }
             var diff = AccountCompare.differences(ra, rb)
             // пока фото читаются через Contacts.app, их не сравниваем — иначе ложные расхождения
-            if !model.loadingPhotos, AccountCompare.photosDiffer(model.photoHash(p.a), model.photoHash(p.b)) {
+            if !model.loadingPhotos, !model.photoHiddenOnMac(p.a), !model.photoHiddenOnMac(p.b),
+               AccountCompare.photosDiffer(model.photoHash(p.a), model.photoHash(p.b)) {
                 diff.append("Фото")
             }
             out[diff.isEmpty ? .same : .differ, default: []]
@@ -305,6 +306,7 @@ private struct PhotoSection: View {
     var body: some View {
         let ha = a.flatMap { model.photoHash($0) }
         let hb = b.flatMap { model.photoHash($0) }
+        let hidden = (a.map(model.photoHiddenOnMac) ?? false) || (b.map(model.photoHiddenOnMac) ?? false)
         if ha != nil || hb != nil || a.flatMap({ model.photo($0) }) != nil || b.flatMap({ model.photo($0) }) != nil {
             Section {
                 HStack(alignment: .top, spacing: 24) {
@@ -315,7 +317,7 @@ private struct PhotoSection: View {
             } header: {
                 HStack {
                     Text("Фото")
-                    if AccountCompare.photosDiffer(ha, hb) {
+                    if !hidden, AccountCompare.photosDiffer(ha, hb) {
                         Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
                         Text(ha == nil || hb == nil ? "есть только с одной стороны" : "разные изображения")
                             .font(.caption).foregroundStyle(.orange)
@@ -332,8 +334,11 @@ private struct PhotoSection: View {
             if hash != nil, let data, let img = NSImage(data: data) {
                 Image(nsImage: img).resizable().scaledToFill().frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
+                let hiddenHere = id.map(model.photoHiddenOnMac) ?? false
                 RoundedRectangle(cornerRadius: 8).fill(.quaternary).frame(width: 72, height: 72)
-                    .overlay(Text(data == nil ? "нет" : "битое").font(.caption).foregroundStyle(.secondary))
+                    .overlay(Text(hiddenHere ? "с Mac\nне видно" : (data == nil ? "нет" : "битое"))
+                        .font(.caption).multilineTextAlignment(.center).foregroundStyle(.secondary))
+                    .help(hiddenHere ? "Mac не получает фото из Google — проверить можно на contacts.google.com" : "")
             }
             Text(title).font(.caption).foregroundStyle(.secondary)
         }

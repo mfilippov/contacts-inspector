@@ -356,7 +356,11 @@ extension ContactTable {
 
     @TableColumnBuilder<ContactRow, Col>
     var nameColumns: some TableColumnContent<ContactRow, Col> {
-        TableColumn("") { (r: ContactRow) in Avatar(data: r.thumbnail, size: 20) }
+        TableColumn("") { (r: ContactRow) in
+            Avatar(data: r.thumbnail ?? model.displayPhoto(r.id), size: 20)
+                .help(r.thumbnail == nil && model.displayPhotoSource[r.id] != nil
+                      ? "Фото из пары в другом аккаунте — Mac не получает фото из Google" : "")
+        }
             .width(24).customizationID("photo")
         TableColumn("Контакт", value: \ContactRow.displayName) { (r: ContactRow) in
             Text(r.displayName).foregroundStyle(r.hasName ? .primary : .secondary)
@@ -453,7 +457,9 @@ struct ContactDetail: View {
         Form {
             Section {
                 HStack(alignment: .top, spacing: 16) {
-                    Avatar(data: contact.image ?? contact.thumbnail, size: 96)
+                    Avatar(data: contact.image ?? contact.thumbnail ?? model.displayPhoto(contact.id), size: 96)
+                        .help(contact.image == nil && contact.thumbnail == nil && model.displayPhotoSource[contact.id] != nil
+                              ? "Фото из пары в другом аккаунте — Mac не получает фото из Google" : "")
                         .opensPhoto((contact.image ?? contact.thumbnail).flatMap(NSImage.init(data:)),
                                     title: r.displayName, isPresented: $showPhoto)
                     VStack(alignment: .leading, spacing: 4) {
