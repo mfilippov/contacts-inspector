@@ -7,7 +7,8 @@ import Foundation
 ///   contacts.json       — все поля в структурированном виде (для анализа и diff'ов)
 ///   photos/<id>.<ext>   — оригинальные фото, photos/thumb/<id>.<ext> — миниатюры
 ///   accounts.json       — аккаунты (контейнеры) и группы
-func runBackup(result r: FetchResult, notes: [String: String], telegram: [TGUser]?, to dir: URL) throws -> String {
+func runBackup(result r: FetchResult, notes: [String: String], extraPhotos: [String: Data] = [:], telegram: [TGUser]?,
+               to dir: URL) throws -> String {
     let fm = FileManager.default
     let photos = dir.appendingPathComponent("photos")
     let thumbs = photos.appendingPathComponent("thumb")
@@ -24,7 +25,8 @@ func runBackup(result r: FetchResult, notes: [String: String], telegram: [TGUser
         let base = safeFileName(c.identifier)
 
         var imageFile: String?, thumbFile: String?
-        if let data = c.imageData {
+        let photo = c.imageData ?? extraPhotos[c.identifier]
+        if let data = photo {
             imageFile = "photos/\(base).\(imageExtension(data))"
             try data.write(to: dir.appendingPathComponent(imageFile!))
             photoCount += 1
@@ -36,7 +38,7 @@ func runBackup(result r: FetchResult, notes: [String: String], telegram: [TGUser
 
         let note: String? = r.notesViaAPI ? (c.note.isEmpty ? nil : c.note) : notes[c.identifier]
 
-        let vcard = try vcardString(for: c, note: note)
+        let vcard = try vcardString(for: c, note: note, photo: photo)
         try vcard.write(to: vcards.appendingPathComponent("\(base).vcf"), atomically: true, encoding: .utf8)
         allVCards += vcard.hasSuffix("\n") ? vcard : vcard + "\r\n"
 
@@ -128,9 +130,9 @@ func writeTelegramBackup(_ users: [TGUser], to dir: URL) throws -> Int {
 // MARK: - vCard helpers
 
 /// vCard одного контакта. Системный сериализатор может не включать фото и заметку — дописываем сами.
-func vcardString(for c: CNContact, note: String?) throws -> String {
+func vcardString(for c: CNContact, note: String?, photo: Data? = nil) throws -> String {
     var vcard = String(decoding: try CNContactVCardSerialization.data(with: [c]), as: UTF8.self)
-    if let data = c.imageData, !vcard.contains("\nPHOTO") {
+    if let data = photo ?? c.imageData, !vcard.contains("\nPHOTO") {
         vcard = insertIntoVCard(vcard, lines: photoLines(data))
     }
     if let note, !note.isEmpty, !vcard.contains("\nNOTE") {

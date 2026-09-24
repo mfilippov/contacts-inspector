@@ -74,3 +74,47 @@ final class ImageValidityTests: XCTestCase {
         XCTAssertEqual(m.imageData, Data([0xFF, 0xD8, 0xFF]), "битое фото источника не затирает фото получателя")
     }
 }
+
+final class StandardJPEGTests: XCTestCase {
+    func testWritesJFIF() {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2000, pixelsHigh: 1000, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let png = rep.representation(using: .png, properties: [:])
+        let jpeg = AccountCompare.standardJPEG(png)!
+        XCTAssertEqual([UInt8](jpeg.prefix(4)), [0xFF, 0xD8, 0xFF, 0xE0], "JPEG должен начинаться с APP0 (JFIF)")
+        let img = NSImage(data: jpeg)!
+        XCTAssertLessThanOrEqual(max(img.representations[0].pixelsWide, img.representations[0].pixelsHigh), 1024)
+        XCTAssertNil(AccountCompare.standardJPEG(Data("Unable to read recordID".utf8)))
+    }
+}
+
+final class PhotoHashTests: XCTestCase {
+    private func image(_ draw: (CGContext) -> Void) -> Data {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 200, pixelsHigh: 200, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        draw(NSGraphicsContext.current!.cgContext)
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])!
+    }
+
+    func testSamePhotoRecompressedMatches() {
+        let a = image { c in
+            c.setFillColor(.white); c.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+            c.setFillColor(.black); c.fillEllipse(in: CGRect(x: 40, y: 30, width: 120, height: 140))
+        }
+        let b = image { c in
+            c.setFillColor(.black); c.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+            c.setFillColor(.white); c.fill(CGRect(x: 0, y: 0, width: 100, height: 200))
+        }
+        let recompressed = AccountCompare.standardJPEG(a, maxSide: 120)
+        let ha = AccountCompare.photoHash(a), hr = AccountCompare.photoHash(recompressed), hb = AccountCompare.photoHash(b)
+        XCTAssertFalse(AccountCompare.photosDiffer(ha, hr), "то же фото после пережатия")
+        XCTAssertTrue(AccountCompare.photosDiffer(ha, hb), "разные фото")
+        XCTAssertTrue(AccountCompare.photosDiffer(ha, nil), "фото только с одной стороны")
+        XCTAssertFalse(AccountCompare.photosDiffer(nil, nil))
+    }
+}

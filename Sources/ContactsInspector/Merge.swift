@@ -121,11 +121,11 @@ enum ContactMerge {
     /// Собирает объединённый контакт на основе копии основного.
     /// keep — id элементов многозначных полей, которые нужно сохранить.
     static func build(primary: CNContact, others: [CNContact], scalars: [MergeScalar: String],
-                      birthday: DateComponents?, imageFrom: CNContact?, keep: Set<String>) -> CNMutableContact {
+                      birthday: DateComponents?, imageData: Data?, keep: Set<String>) -> CNMutableContact {
         let m = primary.mutableCopy() as! CNMutableContact
         for f in MergeScalar.allCases { f.set(m, scalars[f] ?? f.get(primary)) }
         m.birthday = birthday
-        m.imageData = imageFrom?.imageData
+        m.imageData = imageData
 
         var phones: [CNLabeledValue<CNPhoneNumber>] = []
         var emails: [CNLabeledValue<NSString>] = []

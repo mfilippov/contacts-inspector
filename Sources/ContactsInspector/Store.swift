@@ -119,6 +119,36 @@ func fetchNotesViaAppleScript() throws -> [String: String] {
     return notes
 }
 
+/// Фото, которые Contacts.framework не отдаёт (у большинства контактов — фото из «Поделиться именем и фото»),
+/// читаются через vCard, которую отдаёт Contacts.app. Возвращает id контакта → данные фото.
+func fetchPhotosViaAppleScript() throws -> [String: Data] {
+    let script = """
+    set out to ""
+    tell application "Contacts"
+        set ids to id of every person
+        repeat with pid in ids
+            set v to vcard of person id pid
+            if v contains "PHOTO" then set out to out & pid & (ASCII character 30) & v & (ASCII character 31)
+        end repeat
+    end tell
+    return out
+    """
+    let text = try runOSAScript(script)
+    var photos: [String: Data] = [:]
+    for record in text.split(separator: "\u{1F}", omittingEmptySubsequences: true) {
+        let parts = record.split(separator: "\u{1E}", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else { continue }
+        let id = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        // строки vCard свёрнуты (продолжение начинается с пробела) — разворачиваем
+        let card = parts[1].replacingOccurrences(of: "\r\n ", with: "").replacingOccurrences(of: "\n ", with: "")
+        guard let line = card.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("PHOTO") }),
+              let colon = line.firstIndex(of: ":") else { continue }
+        let b64 = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        if let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) { photos[id] = data }
+    }
+    return photos
+}
+
 /// Записывает заметку через Contacts.app (API не даёт писать note без entitlement).
 /// Пустая заметка удаляется целиком (missing value), а не записывается пустой строкой: Contacts.framework
 /// без entitlement не может заменить многозначные поля (телефоны, email, …) у контакта, у которого

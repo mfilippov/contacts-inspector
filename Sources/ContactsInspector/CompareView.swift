@@ -107,6 +107,16 @@ struct CompareView: View {
                 Button("B → A (\(count(.bToA, rows: all[mode, default: []])))") { pending = .bToA }
                     .disabled(count(.bToA, rows: all[mode, default: []]) == 0)
                     .help("Сделать A таким же, как B")
+                Button("Фото A → B (\(photoPairs(all[mode, default: []]).count))") {
+                    let pairs = photoPairs(all[mode, default: []])
+                    Task {
+                        let r = await model.pushPhotos(pairs)
+                        model.resultMessage = "Фото загружено: \(r.done)" + (r.failed.isEmpty ? "" :
+                            "\nНе удалось (\(r.failed.count)):\n" + r.failed.prefix(15).joined(separator: "\n"))
+                    }
+                }
+                .disabled(photoPairs(all[mode, default: []]).isEmpty)
+                .help("Заново загрузить фото из A в B — для пар, где в A есть фото")
                 Divider().frame(height: 16)
                 Button("Удалить в A (\(deleteIds(.a, rows: all[mode, default: []]).count))", role: .destructive) { pendingDelete = .a }
                     .disabled(deleteIds(.a, rows: all[mode, default: []]).isEmpty)
@@ -117,6 +127,12 @@ struct CompareView: View {
                 ForEach(Mode.allCases, id: \.self) { m in Text("\(m.rawValue) (\(all[m, default: []].count))").tag(m) }
             }
             .pickerStyle(.segmented).labelsHidden().fixedSize()
+            if model.loadingPhotos {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Загружаю фото — пока они не загружены, фото не сравниваются").font(.callout).foregroundStyle(.secondary)
+                }
+            }
             if containers.count < 2 {
                 Text("Подключён только один аккаунт. Добавьте Google в «Системных настройках» → «Интернет-аккаунты» → Google → «Контакты».")
                     .font(.callout).foregroundStyle(.secondary)
@@ -135,7 +151,11 @@ struct CompareView: View {
         var out: [Mode: [CompareRow]] = [:]
         for p in match.pairs {
             guard let ra = byId[p.a], let rb = byId[p.b] else { continue }
-            let diff = AccountCompare.differences(ra, rb)
+            var diff = AccountCompare.differences(ra, rb)
+            // пока фото читаются через Contacts.app, их не сравниваем — иначе ложные расхождения
+            if !model.loadingPhotos, AccountCompare.photosDiffer(model.photoHash(p.a), model.photoHash(p.b)) {
+                diff.append("Фото")
+            }
             out[diff.isEmpty ? .same : .differ, default: []]
                 .append(CompareRow(a: p.a, b: p.b, aName: ra.displayName, bName: rb.displayName, diff: diff))
         }
@@ -178,6 +198,14 @@ struct CompareView: View {
         model.resultMessage = "Перенесено: \(done)" + (failed.isEmpty ? "" :
             "\nНе удалось (\(failed.count)):\n" + failed.prefix(15).joined(separator: "\n")
             + (failed.count > 15 ? "\n… и ещё \(failed.count - 15)" : ""))
+    }
+
+    /// Пары (получатель B, источник A) у строк, к которым применяется действие, где в A есть фото.
+    private func photoPairs(_ rows: [CompareRow]) -> [(target: String, source: String)] {
+        targets(rows).compactMap { r in
+            guard let a = r.a, let b = r.b, model.contact(a)?.record.hasImage == true else { return nil }
+            return (b, a)
+        }
     }
 
     /// Контакты стороны A или B у строк, к которым применяется действие.
@@ -242,6 +270,7 @@ private struct CompareDetail: View {
         let ca = row.a.flatMap { model.cnContact($0) }
         let cb = row.b.flatMap { model.cnContact($0) }
         Form {
+            PhotoSection(a: row.a, b: row.b, nameA: nameA, nameB: nameB)
             ForEach(titles, id: \.self) { title in
                 let a = fa.first { $0.title == title }
                 let b = fb.first { $0.title == title }
@@ -262,6 +291,52 @@ private struct CompareDetail: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Фото обеих сторон рядом и совпадают ли они.
+private struct PhotoSection: View {
+    @EnvironmentObject var model: AppModel
+    let a: String?
+    let b: String?
+    let nameA: String
+    let nameB: String
+
+    var body: some View {
+        let ha = a.flatMap { model.photoHash($0) }
+        let hb = b.flatMap { model.photoHash($0) }
+        if ha != nil || hb != nil || a.flatMap({ model.photo($0) }) != nil || b.flatMap({ model.photo($0) }) != nil {
+            Section {
+                HStack(alignment: .top, spacing: 24) {
+                    side(a, title: nameA, hash: ha)
+                    side(b, title: nameB, hash: hb)
+                    Spacer()
+                }
+            } header: {
+                HStack {
+                    Text("Фото")
+                    if AccountCompare.photosDiffer(ha, hb) {
+                        Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+                        Text(ha == nil || hb == nil ? "есть только с одной стороны" : "разные изображения")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func side(_ id: String?, title: String, hash: UInt64?) -> some View {
+        VStack(spacing: 4) {
+            let data = id.flatMap { model.photo($0) }
+            if hash != nil, let data, let img = NSImage(data: data) {
+                Image(nsImage: img).resizable().scaledToFill().frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                RoundedRectangle(cornerRadius: 8).fill(.quaternary).frame(width: 72, height: 72)
+                    .overlay(Text(data == nil ? "нет" : "битое").font(.caption).foregroundStyle(.secondary))
+            }
+            Text(title).font(.caption).foregroundStyle(.secondary)
+        }
     }
 }
 

@@ -39,6 +39,10 @@ enum LoadState: Equatable {
 final class AppModel: ObservableObject {
     @Published var state: LoadState = .idle
     @Published var contacts: [AppContact] = []
+    /// Фото, прочитанные через Contacts.app, — для контактов, у которых Contacts.framework фото не видит.
+    @Published private(set) var externalPhotos: [String: Data] = [:]
+    @Published private(set) var loadingPhotos = false
+    private var fetchingPhotos = false
     /// Контакты, у которых в поле фото лежит не изображение.
     @Published private(set) var brokenPhotoIds = Set<String>()
     @Published var containers: [CNContainer] = []
@@ -91,6 +95,7 @@ final class AppModel: ObservableObject {
             }.value
             fetchResult = result
             cnById = Dictionary(result.contacts.map { ($0.identifier, $0) }, uniquingKeysWith: { a, _ in a })
+            photoHashCache = [:]
             tableSelection = tableSelection.filter { cnById[$0] != nil }
             if let e = editingId, cnById[e] == nil { editingId = nil }
             self.notes = notes
@@ -111,8 +116,9 @@ final class AppModel: ObservableObject {
             } else {
                 notesSource = "Заметки: через AppleScript (\(notes.count))"
             }
-            brokenPhotoIds = Set(result.contacts.filter { $0.imageData != nil && !AccountCompare.isValidImage($0.imageData) }
-                .map(\.identifier))
+            applyExternalPhotos()
+            loadingPhotos = true   // сразу, чтобы сравнение не показывало ложные расхождения фото
+            Task { await loadExternalPhotos() }
             debugLog("loaded \(result.contacts.count) contacts; accounts: " + result.containers.map { c in
                 "\(displayName(c)) [type \(c.type.rawValue)] \(result.containerOf.values.filter { $0 == c.identifier }.count)"
             }.joined(separator: ", "))
@@ -400,6 +406,47 @@ final class AppModel: ObservableObject {
 
     // MARK: - Сравнение аккаунтов
 
+    /// Фото контакта: то, что отдаёт Contacts.framework, иначе прочитанное через Contacts.app.
+    func photo(_ id: String) -> Data? { cnById[id]?.imageData ?? externalPhotos[id] }
+
+    /// Фоном читает фото через Contacts.app (~10 с) и дополняет ими контакты.
+    func loadExternalPhotos() async {
+        guard !fetchingPhotos else { return }
+        fetchingPhotos = true
+        loadingPhotos = true
+        defer { fetchingPhotos = false; loadingPhotos = false }
+        do {
+            let all = try await Task.detached { try fetchPhotosViaAppleScript() }.value
+            externalPhotos = all.filter { cnById[$0.key] != nil && cnById[$0.key]?.imageData == nil }
+            debugLog("photos via Contacts.app: \(externalPhotos.count)")
+            applyExternalPhotos()
+        } catch {
+            debugLog("photos via Contacts.app failed: \(error)")
+        }
+    }
+
+    /// Проставляет фото из externalPhotos в список контактов (аватары, сводка, фильтры) и пересчитывает битые.
+    private func applyExternalPhotos() {
+        photoHashCache = [:]
+        contacts = contacts.map { c in
+            guard c.image == nil, let data = externalPhotos[c.id] else { return c }
+            var r = c.record
+            r.hasImage = true
+            return AppContact(record: r, thumbnail: c.thumbnail ?? data, image: data)
+        }
+        brokenPhotoIds = Set(contacts.map(\.id).filter { id in photo(id) != nil && !AccountCompare.isValidImage(photo(id)) })
+    }
+
+    private var photoHashCache: [String: UInt64?] = [:]
+
+    /// Отпечаток фото контакта (кэшируется до следующей загрузки).
+    func photoHash(_ id: String) -> UInt64? {
+        if let cached = photoHashCache[id] { return cached }
+        let h = AccountCompare.photoHash(photo(id))
+        photoHashCache[id] = h
+        return h
+    }
+
     func records(in container: String) -> [ContactRecord] {
         contacts.map(\.record).filter { $0.containerId == container }
     }
@@ -416,7 +463,7 @@ final class AppModel: ObservableObject {
             let name = contact(s.identifier)?.record.displayName ?? s.identifier
             do {
                 let m = CNMutableContact()
-                AccountCompare.fill(m, from: s)
+                AccountCompare.fill(m, from: s, photo: photo(s.identifier))
                 let req = CNSaveRequest()
                 req.add(m, toContainerWithIdentifier: container)
                 try store.execute(req)
@@ -459,7 +506,7 @@ final class AppModel: ObservableObject {
                     fresh = try refetch(t.identifier)
                 }
                 let m = fresh.mutableCopy() as! CNMutableContact
-                AccountCompare.fill(m, from: s)
+                AccountCompare.fill(m, from: s, photo: photo(s.identifier))
                 let req = CNSaveRequest()
                 req.update(m)
                 do { try store.execute(req) } catch {
@@ -474,6 +521,31 @@ final class AppModel: ObservableObject {
             }
         }
         debugLog("overwrote \(done), failed \(failed.count)")
+        await load(silent: true)
+        return (done, failed)
+    }
+
+    /// Заново загружает фото источника в контакт-получатель (как стандартный JPEG с JFIF).
+    func pushPhotos(_ pairs: [(target: String, source: String)]) async -> (done: Int, failed: [String]) {
+        var done = 0
+        var failed: [String] = []
+        for p in pairs {
+            let name = contact(p.target)?.record.displayName ?? p.target
+            let data = photo(p.source)
+            guard AccountCompare.isValidImage(data), let jpeg = AccountCompare.standardJPEG(data) else { continue }
+            do {
+                let m = try refetch(p.target).mutableCopy() as! CNMutableContact
+                m.imageData = jpeg
+                let req = CNSaveRequest()
+                req.update(m)
+                try store.execute(req)
+                done += 1
+            } catch {
+                debugLog("push photo \(name) failed: \(error)")
+                failed.append("\(name): \(Self.shortError(error))")
+            }
+        }
+        debugLog("pushed photos \(done), failed \(failed.count)")
         await load(silent: true)
         return (done, failed)
     }
@@ -493,7 +565,7 @@ final class AppModel: ObservableObject {
             }
             let keep = Set(ContactMerge.labeled(base).map(\.0.id)).subtracting([itemId])
             let m = ContactMerge.build(primary: base, others: [], scalars: [:], birthday: base.birthday,
-                                       imageFrom: base, keep: keep)
+                                       imageData: base.imageData, keep: keep)
             let req = CNSaveRequest()
             req.update(m)
             do { try store.execute(req) } catch {
@@ -593,7 +665,7 @@ final class AppModel: ObservableObject {
                 base = try refetch(primaryId)
             }
             let m = ContactMerge.build(primary: base, others: others, scalars: scalars, birthday: birthday,
-                                       imageFrom: imageFrom.flatMap { cnById[$0] }, keep: keep)
+                                       imageData: imageFrom.flatMap { photo($0) }, keep: keep)
             do {
                 let req = CNSaveRequest()
                 req.update(m)
@@ -715,8 +787,9 @@ final class AppModel: ObservableObject {
                     tgUsers = telegram.users
                 }
                 let users = tgUsers
+                let photos = externalPhotos
                 let summary = try await Task.detached {
-                    try runBackup(result: result, notes: notes, telegram: users, to: dir)
+                    try runBackup(result: result, notes: notes, extraPhotos: photos, telegram: users, to: dir)
                 }.value
                 let now = Date()
                 lastBackup = now

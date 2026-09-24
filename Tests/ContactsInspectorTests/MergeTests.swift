@@ -32,7 +32,7 @@ final class MergeTests: XCTestCase {
         XCTAssertEqual(scalars[.givenName], "Иван", "основной контакт приоритетнее")
         XCTAssertEqual(scalars[.familyName], "Петров", "пустое поле берём у другого")
         let keep = Set(items.map(\.id)).subtracting(items.filter { $0.text.contains("999") }.map(\.id))
-        let m = ContactMerge.build(primary: a, others: [b], scalars: scalars, birthday: nil, imageFrom: b, keep: keep)
+        let m = ContactMerge.build(primary: a, others: [b], scalars: scalars, birthday: nil, imageData: b.imageData, keep: keep)
         XCTAssertEqual(m.givenName, "Иван")
         XCTAssertEqual(m.familyName, "Петров")
         XCTAssertEqual(m.organizationName, "Рога")
@@ -57,7 +57,7 @@ final class MergeTests: XCTestCase {
         b.dates = [CNLabeledValue(label: CNLabelDateAnniversary, value: d as NSDateComponents)]
         let pa = a.copy() as! CNContact, pb = b.copy() as! CNContact
         let items = ContactMerge.items(primary: pa, others: [pb])
-        let m = ContactMerge.build(primary: pa, others: [pb], scalars: [:], birthday: nil, imageFrom: nil,
+        let m = ContactMerge.build(primary: pa, others: [pb], scalars: [:], birthday: nil, imageData: nil,
                                    keep: Set(items.map(\.id)))
         XCTAssertEqual(m.phoneNumbers.count, 1)
         XCTAssertEqual(m.emailAddresses.map { $0.value as String }, ["a@x.ru"])

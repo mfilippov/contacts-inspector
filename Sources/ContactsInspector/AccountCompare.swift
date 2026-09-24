@@ -43,7 +43,6 @@ enum AccountCompare {
                 return (d.lowercased(), d)
             }),
             one("Заметка", r.note ?? ""),
-            Field(title: "Фото", key: r.hasImage ? "есть" : "", display: r.hasImage ? "есть" : ""),
         ]
     }
 
@@ -95,7 +94,8 @@ enum AccountCompare {
     // MARK: - Перенос
 
     /// Копирует содержимое контакта (без identifier'ов) в изменяемый контакт — новый или существующий.
-    static func fill(_ m: CNMutableContact, from s: CNContact) {
+    /// photo — фото источника, если Contacts.framework его не видит (прочитано через Contacts.app).
+    static func fill(_ m: CNMutableContact, from s: CNContact, photo: Data? = nil) {
         m.contactType = s.contactType
         m.namePrefix = s.namePrefix; m.givenName = s.givenName; m.middleName = s.middleName
         m.familyName = s.familyName; m.previousFamilyName = s.previousFamilyName; m.nameSuffix = s.nameSuffix
@@ -116,7 +116,54 @@ enum AccountCompare {
         m.dates = fresh(s.dates)
         // Битое «фото» (не изображение — например, текст «Unable to read recordID») не переносим:
         // iCloud отказывается его сохранять (134040). Фото получателя тогда остаётся как есть.
-        if s.imageData == nil || isValidImage(s.imageData) { m.imageData = s.imageData }
+        let image = photo ?? s.imageData
+        if image == nil { m.imageData = nil }
+        else if isValidImage(image) { m.imageData = standardJPEG(image) ?? image }
+    }
+
+    /// Перцептивный отпечаток изображения (dHash 9×8 в градациях серого): у одного и того же фото после
+    /// пережатия (Google перекодирует фото) отпечатки почти совпадают, у разных — заметно отличаются.
+    static func photoHash(_ data: Data?) -> UInt64? {
+        guard isValidImage(data), let data, let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumb = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 64,
+              ] as CFDictionary) else { return nil }
+        var pixels = [UInt8](repeating: 0, count: 9 * 8)
+        guard let ctx = CGContext(data: &pixels, width: 9, height: 8, bitsPerComponent: 8, bytesPerRow: 9,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return nil }
+        ctx.interpolationQuality = .medium
+        ctx.draw(thumb, in: CGRect(x: 0, y: 0, width: 9, height: 8))
+        var hash: UInt64 = 0
+        for y in 0..<8 { for x in 0..<8 { hash = hash << 1 | (pixels[y * 9 + x] > pixels[y * 9 + x + 1] ? 1 : 0) } }
+        return hash
+    }
+
+    /// Различаются ли фото: одно есть, другого нет, или это разные изображения.
+    static func photosDiffer(_ a: UInt64?, _ b: UInt64?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return false
+        case let (x?, y?): return (x ^ y).nonzeroBitCount > 12
+        default: return true
+        }
+    }
+
+    /// Стандартный JPEG с заголовком JFIF (APP0), не больше maxSide точек по большей стороне.
+    /// Google через CardDAV не принимает фото, сохранённые iPhone/Telegram (JPEG только с EXIF, без JFIF).
+    static func standardJPEG(_ data: Data?, maxSide: Int = 1024) -> Data? {
+        guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: maxSide,
+              ] as CFDictionary) else { return nil }
+        let out = NSMutableData()
+        guard let dst = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dst, image, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        guard CGImageDestinationFinalize(dst) else { return nil }
+        return out as Data
     }
 
     /// Можно ли декодировать данные как изображение.

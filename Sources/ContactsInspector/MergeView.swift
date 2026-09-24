@@ -60,7 +60,7 @@ struct MergeSheet: View {
     private func form(_ primary: CNContact) -> some View {
         let items = ContactMerge.items(primary: primary, others: others)
         let birthdays = ContactMerge.birthdayVariants(primary: primary, others: others)
-        let withPhoto = contacts.filter { $0.imageData != nil }
+        let withPhoto = contacts.filter { model.photo($0.identifier) != nil }
         Form {
             Section {
                 Picker("Основной контакт", selection: $primaryId) {
@@ -131,7 +131,7 @@ struct MergeSheet: View {
         guard let primary else { return }
         for f in MergeScalar.allCases { scalars[f] = ContactMerge.defaultChoice(f, primary: primary, others: others) }
         birthdayIndex = 0
-        imageFrom = ([primary] + others).first { $0.imageData != nil }?.identifier
+        imageFrom = ([primary] + others).first { model.photo($0.identifier) != nil }?.identifier
         keep = Set(ContactMerge.items(primary: primary, others: others).map(\.id))
         note = ContactMerge.mergedNote(([primaryId] + others.map(\.identifier)).map { model.contact($0)?.record.note })
     }
