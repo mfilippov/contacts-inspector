@@ -363,6 +363,27 @@ final class TelegramService: ObservableObject {
         return (changed, errors)
     }
 
+    /// Меняет имя/фамилию контакта Telegram (видно только вам) и, если передана, вашу заметку о нём.
+    func editContact(_ u: TGUser, firstName: String, lastName: String, note: String?) async throws {
+        guard let client, auth == .ready else { throw ToolError("Нет подключения к Telegram") }
+        try await withFloodRetry {
+            _ = try await client.addContact(
+                contact: ImportedContact(firstName: firstName, lastName: lastName, note: nil, phoneNumber: ""),
+                sharePhoneNumber: false, userId: u.id)
+        }
+        if let note {
+            try await withFloodRetry {
+                _ = try await client.setUserNote(note: FormattedText(entities: [], text: note), userId: u.id)
+            }
+            fullInfoCache[u.id]?.note = note
+        }
+        if let i = users.firstIndex(where: { $0.id == u.id }) {
+            users[i].firstName = firstName
+            users[i].lastName = lastName
+        }
+        debugLog("telegram contact edited \(u.id)")
+    }
+
     /// Удаляет пользователей из контактов Telegram (чаты не трогает).
     func removeContacts(_ ids: [Int64]) async throws {
         guard let client, auth == .ready else { throw ToolError("Нет подключения к Telegram") }

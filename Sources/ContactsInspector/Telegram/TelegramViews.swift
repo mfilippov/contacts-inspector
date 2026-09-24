@@ -256,6 +256,74 @@ struct TelegramImportSheet: View {
     }
 }
 
+/// Редактирование контакта Telegram: имя и фамилия (видны только вам) и ваша заметка о нём.
+struct TelegramEditSheet: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var tg: TelegramService
+    @Environment(\.dismiss) private var dismiss
+    let user: TGUser
+    @State private var firstName = ""
+    @State private var lastName = ""
+    @State private var note = ""
+    @State private var originalNote: String?
+    @State private var saving = false
+
+    var body: some View {
+        let apple = model.matcher.appleContacts(for: user).compactMap { model.contact($0)?.record }.first
+        VStack(spacing: 0) {
+            HStack {
+                Button("Отмена") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Text("Контакт Telegram").font(.headline)
+                Spacer()
+                Button("Сохранить") {
+                    saving = true
+                    Task {
+                        let ok = await model.editTelegramContact(
+                            user, firstName: firstName.trimmed, lastName: lastName.trimmed,
+                            note: note != (originalNote ?? "") ? note : nil)
+                        saving = false
+                        if ok { dismiss() }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(firstName.trimmed.isEmpty || firstName.trimmed.count > 64 || lastName.trimmed.count > 64
+                          || saving || (firstName == user.firstName && lastName == user.lastName && note == (originalNote ?? "")))
+            }
+            .padding()
+            Divider()
+            Form {
+                Section {
+                    TextField("Имя", text: $firstName, prompt: Text("обязательно"))
+                    TextField("Фамилия", text: $lastName, prompt: Text("не указано"))
+                    if let apple {
+                        LabeledContent("В Apple: \([apple.givenName, apple.familyName].filter { !$0.isEmpty }.joined(separator: " "))") {
+                            Button("Взять имя из Apple") {
+                                firstName = apple.givenName.isEmpty ? apple.displayName : apple.givenName
+                                lastName = apple.familyName
+                            }
+                        }
+                    }
+                } footer: {
+                    Text("Имя контакта видно только вам и синхронизируется на все ваши устройства Telegram.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Ваша заметка") {
+                    TextEditor(text: $note).frame(minHeight: 60).disabled(originalNote == nil)
+                }
+            }
+            .formStyle(.grouped)
+        }
+        .frame(width: 480, height: 440)
+        .task {
+            firstName = user.firstName
+            lastName = user.lastName
+            originalNote = await tg.fullInfo(user.id)?.note ?? ""
+            note = originalNote ?? ""
+        }
+    }
+}
+
 /// Пункты контекстного меню (плоские — без вложенного Menu).
 struct AutoDeleteMenuItems: View {
     @EnvironmentObject var tg: TelegramService
@@ -355,6 +423,7 @@ private struct TelegramContactsTable: View {
     @EnvironmentObject var tg: TelegramService
     @State private var search = ""
     @State private var pickFor: TGUser?
+    @State private var editFor: TGUser?
     @State private var confirmSync = false
     @State private var sortOrder = [KeyPathComparator(\TGRow.name)]
     @State private var showCard = true
@@ -416,6 +485,7 @@ private struct TelegramContactsTable: View {
                             Task { await model.setTelegramLinks([(sid, r.user)]) }
                         }
                     }
+                    Button("Изменить имя…") { editFor = r.user }
                     Button("Связать с контактом Apple…") { pickFor = r.user }
                     if !r.appleIds.isEmpty {
                         Button("Отвязать") { Task { await model.setTelegramLinks(r.appleIds.map { ($0, nil) }) } }
@@ -456,6 +526,7 @@ private struct TelegramContactsTable: View {
                 Button { showCard.toggle() } label: { Label("Карточка", systemImage: "sidebar.right") }
             }
         }
+        .sheet(item: $editFor) { user in TelegramEditSheet(user: user) }
         .sheet(item: $pickFor) { user in
             AppleContactPicker(title: "Связать «\(user.name)» с контактом Apple") { id in
                 Task { await model.setTelegramLinks([(id, user)]) }
@@ -526,6 +597,7 @@ struct TelegramContactCard: View {
     @State private var picking = false
     @State private var importInto: String?
     @State private var showPhoto = false
+    @State private var editing = false
 
     var body: some View {
         let m = model.matcher
@@ -547,6 +619,7 @@ struct TelegramContactCard: View {
                         }
                         Text(user.status).font(.caption).foregroundStyle(.secondary)
                         HStack {
+                            Button("Изменить…") { editing = true }
                             Button("Открыть в Telegram") { NSWorkspace.shared.open(URL(string: user.link)!) }
                             Button("Удалить из контактов…", role: .destructive) { tg.pendingRemove = [user] }
                         }
@@ -641,6 +714,7 @@ struct TelegramContactCard: View {
                 Task { await model.setTelegramLinks([(id, user)]) }
             }
         }
+        .sheet(isPresented: $editing) { TelegramEditSheet(user: user) }
         .sheet(item: Binding(get: { importInto.map { ImportTarget(id: $0) } }, set: { importInto = $0?.id })) { t in
             TelegramImportSheet(contactId: t.id, user: user)
         }

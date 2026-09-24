@@ -361,6 +361,24 @@ final class AppModel: ObservableObject {
     }
 
     /// Удаляет контакты из Telegram; перед этим сохраняет их в историю (JSON, vCard, фото).
+    /// Редактирует контакт Telegram; перед этим сохраняет его данные в историю.
+    func editTelegramContact(_ u: TGUser, firstName: String, lastName: String, note: String?) async -> Bool {
+        guard let telegram else { return false }
+        do {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+            let stamp = fmt.string(from: Date())
+            let dir = historyDir.appendingPathComponent("\(stamp)_telegram-edit")
+            _ = try writeTelegramBackup([telegram.users.first { $0.id == u.id } ?? u], to: dir)
+            appendHistory(["\(stamp)\ttelegram-edit\t\(u.name) → \(firstName) \(lastName)\t\(dir.lastPathComponent)"])
+            try await telegram.editContact(u, firstName: firstName, lastName: lastName, note: note)
+            return true
+        } catch {
+            errorMessage = "Не удалось изменить контакт Telegram: \(TelegramService.describe(error))"
+            return false
+        }
+    }
+
     /// Пользователи Telegram (из ваших контактов Telegram), связанные с этими контактами Apple.
     func linkedTelegramUsers(_ appleIds: Set<String>) -> [TGUser] {
         let m = matcher
