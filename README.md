@@ -16,6 +16,13 @@ It was built for moving from iPhone to Android: tidy up the address book before 
 - full backup (vCard with photos and notes, JSON, photos) to `~/Documents/Contacts Inspector Backups`
   with a list of backups inside the app.
 
+**Compare accounts** (e.g. iCloud and Google, both connected in macOS)
+- matching by phone, email, and name; Differ / Only in A / Only in B / Match modes;
+- field-by-field comparison, values of multi-value fields individually with deletion on either side;
+  photos compared by image (robust to Google's recompression);
+- "A → B" / "B → A": overwrite the pair or copy the missing ones (an exact copy, with history),
+  "Photo A → B", "Delete in A / in B".
+
 **Telegram** (as a separate client via [TDLib](https://github.com/tdlib/td))
 - sign-in with a QR code or phone number, including the 2FA password;
 - contact table: username, ID, chat, auto-delete timer; contact card;
@@ -70,6 +77,10 @@ to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API
   replace multi-value fields (phones, email, URLs, profiles) of a contact whose note
   exists, even an empty one (error 134092). A note is therefore deleted entirely (`missing value`), not
   written as an empty string; when transferring and merging, the recipient's note is temporarily removed and then restored.
+- **Photos:** Contacts.framework does not return the photo for most contacts (only 18 of 586), so photos
+  are read through Contacts.app (vCard) in the background after load, which takes ~10 s.
+- **Google via CardDAV** stores social profiles lossily (drops the ID and URL, changes the case of the username)
+  and drops profiles that have no username.
 - **macOS 27:** a `Button` inside a `ScrollView` that is the root of `.inspector` does not receive clicks,
   so the cards use `Form(.grouped)`. Minimal example: `repro/InspectorScrollButton`.
 - The UI is in Russian only for now.

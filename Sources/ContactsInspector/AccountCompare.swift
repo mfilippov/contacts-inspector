@@ -150,8 +150,8 @@ enum AccountCompare {
         }
     }
 
-    /// Стандартный JPEG с заголовком JFIF (APP0), не больше maxSide точек по большей стороне.
-    /// Google через CardDAV не принимает фото, сохранённые iPhone/Telegram (JPEG только с EXIF, без JFIF).
+    /// Стандартный JPEG (с заголовком JFIF), не больше maxSide точек по большей стороне — так фото
+    /// переносится в предсказуемом виде и разумного размера.
     static func standardJPEG(_ data: Data?, maxSide: Int = 1024) -> Data? {
         guard let data, let src = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(src, 0, [
