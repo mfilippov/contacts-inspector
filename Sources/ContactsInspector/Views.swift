@@ -28,6 +28,7 @@ struct RootView: View {
                     case .summary: SummaryView()
                     case .backups: BackupsView()
                     case .telegram: TelegramView()
+                    case .compare: CompareView()
                     default: ContactTable()
                     }
                 }
@@ -154,6 +155,7 @@ struct Sidebar: View {
             SidebarRow(title: "Сводка", symbol: "chart.bar", filter: .summary)
             SidebarRow(title: "Бэкапы", symbol: "externaldrive", filter: .backups, badge: model.backups.count)
             SidebarRow(title: "Telegram", symbol: "paperplane", filter: .telegram, badge: tg.users.count)
+            SidebarRow(title: "Сравнение аккаунтов", symbol: "arrow.left.arrow.right.square", filter: .compare)
             SidebarRow(title: "Все контакты", symbol: "person.crop.rectangle.stack", filter: .all,
                        badge: model.contacts.count)
 

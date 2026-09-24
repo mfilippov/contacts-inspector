@@ -26,6 +26,7 @@ enum SidebarFilter: Hashable {
     case tgNameDiffers      // связан, но имя отличается от Telegram
     case duplicates         // возможные дубли (общий телефон, email или имя)
     case cyrillicNames      // имя, отчество или фамилия кириллицей
+    case compare            // сравнение двух аккаунтов
 }
 
 enum LoadState: Equatable {
@@ -388,6 +389,75 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    // MARK: - Сравнение аккаунтов
+
+    func records(in container: String) -> [ContactRecord] {
+        contacts.map(\.record).filter { $0.containerId == container }
+    }
+
+    /// Создаёт копии контактов в другом аккаунте (со всеми полями, фото и заметкой).
+    func copyContacts(_ ids: [String], to container: String) async -> Int {
+        let sources = ids.compactMap { cnById[$0] }
+        guard !sources.isEmpty else { return 0 }
+        do {
+            let req = CNSaveRequest()
+            let created = sources.map { s -> CNMutableContact in
+                let m = CNMutableContact()
+                AccountCompare.fill(m, from: s)
+                req.add(m, toContainerWithIdentifier: container)
+                return m
+            }
+            try store.execute(req)
+            for (s, m) in zip(sources, created) {
+                if let note = contact(s.identifier)?.record.note, !note.isEmpty {
+                    try setNoteViaAppleScript(contactId: m.identifier, note: note)
+                }
+            }
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+            let stamp = fmt.string(from: Date())
+            appendHistory(zip(sources, created).map { "\(stamp)\tcopy\t\(contact($0.identifier)?.record.displayName ?? "")\t\($0.identifier) → \($1.identifier)" })
+            debugLog("copied \(created.count) contacts to \(container)")
+            await load(silent: true)
+            return created.count
+        } catch {
+            errorMessage = "Не удалось скопировать контакты: \(error)"
+            await load(silent: true)
+            return 0
+        }
+    }
+
+    /// Перезаписывает контакты target содержимым source (пары из разных аккаунтов). Копии target — в историю.
+    func overwrite(_ pairs: [(target: String, source: String)]) async -> Int {
+        let items = pairs.compactMap { p in cnById[p.target].flatMap { t in cnById[p.source].map { (t, $0) } } }
+        guard !items.isEmpty else { return 0 }
+        var done = 0
+        do {
+            try archive(items.map(\.0), action: "overwrite")
+            for (t, s) in items {
+                let targetNote = contact(t.identifier)?.record.note ?? ""
+                let sourceNote = contact(s.identifier)?.record.note ?? ""
+                // контакт с заметкой Contacts.framework не сохраняет (134092): сначала очищаем заметку
+                if !targetNote.isEmpty { try setNoteViaAppleScript(contactId: t.identifier, note: "") }
+                let m = t.mutableCopy() as! CNMutableContact
+                AccountCompare.fill(m, from: s)
+                let req = CNSaveRequest()
+                req.update(m)
+                do { try store.execute(req) } catch {
+                    if !targetNote.isEmpty { try? setNoteViaAppleScript(contactId: t.identifier, note: targetNote) }
+                    throw error
+                }
+                if !sourceNote.isEmpty { try setNoteViaAppleScript(contactId: t.identifier, note: sourceNote) }
+                done += 1
+            }
+            debugLog("overwrote \(done) contacts")
+        } catch {
+            errorMessage = "Не удалось перенести (готово \(done) из \(items.count)): \(error)"
+        }
+        await load(silent: true)
+        return done
+    }
+
     // MARK: - Транслитерация
 
     func hasCyrillicName(_ r: ContactRecord) -> Bool {
@@ -618,7 +688,7 @@ final class AppModel: ObservableObject {
     var filtered: [AppContact] {
         var list = contacts
         switch filter ?? .all {
-        case .summary, .backups, .all, .telegram: break
+        case .summary, .backups, .all, .telegram, .compare: break
         case .tgLinked, .tgSuggested, .tgNone:
             let m = matcher
             list = list.filter { c in
