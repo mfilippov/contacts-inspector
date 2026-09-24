@@ -24,6 +24,7 @@ enum SidebarFilter: Hashable {
     case tgNone             // без Telegram
     case tgNeedsFix         // связь с Telegram нужно исправить
     case tgNameDiffers      // связан, но имя отличается от Telegram
+    case duplicates         // возможные дубли (общий телефон, email или имя)
 }
 
 enum LoadState: Equatable {
@@ -55,6 +56,8 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     /// Контакт с заметкой, который нельзя изменить через Contacts.framework (см. hasNote).
     @Published var noteBlockedContact: String?
+    /// Контакты, выбранные для объединения (открывает окно объединения).
+    @Published var mergeIds: [String]?
 
     /// Сервис Telegram (задаётся при старте приложения); нужен для фильтров и сопоставления.
     weak var telegram: TelegramService?
@@ -386,6 +389,58 @@ final class AppModel: ObservableObject {
         return false
     }
 
+    // MARK: - Объединение
+
+    func cnContact(_ id: String) -> CNContact? { cnById[id] }
+
+    var duplicateIds: Set<String> { DuplicateFinder.duplicateIds(contacts.map(\.record)) }
+
+    /// Объединяет контакты: основной обновляется, остальные удаляются. Копии всех — в историю.
+    func merge(primaryId: String, otherIds: [String], scalars: [MergeScalar: String], birthday: DateComponents?,
+               imageFrom: String?, keep: Set<String>, note: String) async -> Bool {
+        guard let primary = cnById[primaryId] else { return false }
+        let others = otherIds.compactMap { cnById[$0] }
+        let oldNote = contact(primaryId)?.record.note ?? ""
+        do {
+            try archive([primary] + others, action: "merge")
+            let m = ContactMerge.build(primary: primary, others: others, scalars: scalars, birthday: birthday,
+                                       imageFrom: imageFrom.flatMap { cnById[$0] }, keep: keep)
+            // Contacts.framework не сохраняет контакт с заметкой (134092): сначала убираем заметку
+            if !oldNote.isEmpty { try setNoteViaAppleScript(contactId: primaryId, note: "") }
+            do {
+                let req = CNSaveRequest()
+                req.update(m)
+                try store.execute(req)
+            } catch {
+                if !oldNote.isEmpty { try? setNoteViaAppleScript(contactId: primaryId, note: oldNote) }
+                throw error
+            }
+            if note != "" || !oldNote.isEmpty { try setNoteViaAppleScript(contactId: primaryId, note: note) }
+            // только после успешного обновления основного — удаляем остальные
+            let (withNote, plain) = split(others)
+            if !plain.isEmpty {
+                let req = CNSaveRequest()
+                for c in plain { req.delete(c.mutableCopy() as! CNMutableContact) }
+                try store.execute(req)
+            }
+            for c in withNote { try deleteContactViaAppleScript(contactId: c.identifier) }
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+            appendHistory(["\(fmt.string(from: Date()))\tmerge\t\(m.givenName) \(m.familyName)\t\(primaryId) ← \(otherIds.joined(separator: ", "))"])
+            debugLog("merged \(otherIds.count) into \(primaryId)")
+            await load(silent: true)
+            tableSelection = [primaryId]
+            return true
+        } catch let e as NSError where e.code == 134092 {
+            errorMessage = "Не удалось сохранить основной контакт: у него заметка, и macOS не даёт его изменить. Выберите основным контакт без заметки. Ничего не удалено."
+            return false
+        } catch {
+            errorMessage = "Не удалось объединить: \(error)"
+            await load(silent: true)
+            return false
+        }
+    }
+
     /// Пользователи Telegram (из ваших контактов Telegram), связанные с этими контактами Apple.
     func linkedTelegramUsers(_ appleIds: Set<String>) -> [TGUser] {
         let m = matcher
@@ -536,6 +591,9 @@ final class AppModel: ObservableObject {
         case .has(let f): list = list.filter { f.count($0.record) > 0 }
         case .missing(let f): list = list.filter { f.count($0.record) == 0 }
         case .tgNeedsFix: list = list.filter { TelegramLink.fixReason($0.record) != nil }
+        case .duplicates:
+            let ids = DuplicateFinder.duplicateIds(contacts.map(\.record))
+            list = list.filter { ids.contains($0.id) }
         case .tgNameDiffers:
             let m = matcher
             list = list.filter { nameDiffersFromTelegram($0.record, matcher: m) }

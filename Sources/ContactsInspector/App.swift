@@ -44,6 +44,7 @@ struct ContactsInspectorApp: App {
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     model.telegram = telegram
+                    DebugTools.shared.model = model
                     delegate.telegram = telegram
                     if model.state == .idle { await model.load() }
                     if telegram.hasSession { telegram.start() }

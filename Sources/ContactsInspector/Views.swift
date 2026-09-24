@@ -67,6 +67,9 @@ struct RootView: View {
             Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории."
                  + (model.pendingDelete.map { model.linkedTelegramUsers($0).isEmpty ? "" : "\n\n«Удалить и из Telegram» уберёт связанных пользователей из контактов Telegram (чаты останутся)." } ?? ""))
         }
+        .sheet(item: Binding(get: { model.mergeIds.map { MergeRequest(ids: $0) } }, set: { model.mergeIds = $0?.ids })) { r in
+            MergeSheet(ids: r.ids)
+        }
         .alert("Контакт с заметкой", isPresented: Binding(get: { model.noteBlockedContact != nil },
                                                           set: { if !$0 { model.noteBlockedContact = nil } }),
                presenting: model.noteBlockedContact) { id in
@@ -173,6 +176,8 @@ struct Sidebar: View {
             Section("Проблемы") {
                 SidebarRow(title: "Без телефона и email", symbol: "exclamationmark.circle", filter: .noPhoneNoEmail,
                            badge: model.contacts.filter { $0.record.phoneNumbers.isEmpty && $0.record.emailAddresses.isEmpty }.count)
+                SidebarRow(title: "Возможные дубли", symbol: "person.2.badge.gearshape", filter: .duplicates,
+                           badge: model.duplicateIds.count)
                 SidebarRow(title: "Исправить связи Telegram", symbol: "link.badge.plus", filter: .tgNeedsFix,
                            badge: model.linksNeedingFix.count)
                 SidebarRow(title: "Без имени", symbol: "person.fill.questionmark", filter: .missing(.name),
@@ -287,6 +292,9 @@ struct ContactTable: View {
             if ids.count == 1, let id = ids.first {
                 Button("Изменить") { model.startEditing(id) }
             }
+            if ids.count > 1 {
+                Button("Объединить (\(ids.count))…") { model.mergeIds = Array(ids) }
+            }
             Button(ids.count > 1 ? "Удалить (\(ids.count))…" : "Удалить…", role: .destructive) {
                 model.confirmDelete(ids)
             }
@@ -307,6 +315,7 @@ struct ContactTable: View {
                 } else if model.tableSelection.count > 1 {
                     VStack(spacing: 12) {
                         Text("Выбрано: \(model.tableSelection.count)").foregroundStyle(.secondary)
+                        Button("Объединить…") { model.mergeIds = Array(model.tableSelection) }
                         Button("Удалить выбранные…", role: .destructive) { model.confirmDelete(model.tableSelection) }
                     }
                 } else {
@@ -666,4 +675,9 @@ extension View {
                 if let image { PhotoViewer(image: image, title: title) }
             }
     }
+}
+
+struct MergeRequest: Identifiable {
+    let ids: [String]
+    var id: String { ids.joined(separator: ",") }
 }

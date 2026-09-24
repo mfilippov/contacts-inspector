@@ -10,6 +10,7 @@ import AppKit
 @MainActor
 final class DebugTools {
     static let shared = DebugTools()
+    weak var model: AppModel?
     private var timers: [Timer] = []
     private var monitor: Any?
     private let logs = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs")
@@ -101,6 +102,20 @@ final class DebugTools {
                 }
                 walk(v, 0)
                 debugLog("cmd tree (\(out.count)):\n" + out.joined(separator: "\n"))
+            case "select":
+                // select 0,1 — выделить строки таблицы контактов по номерам в текущем порядке
+                guard let model, parts.count >= 2 else { continue }
+                let idx = parts[1].split(separator: ",").compactMap { Int($0) }
+                model.tableSelection = Set(idx.compactMap { model.tableOrder.indices.contains($0) ? model.tableOrder[$0] : nil })
+                debugLog("cmd select \(idx) -> \(model.tableSelection.count)")
+            case "merge":
+                guard let model else { continue }
+                model.mergeIds = Array(model.tableSelection)
+                debugLog("cmd merge \(model.tableSelection.count)")
+            case "filter":
+                guard let model, parts.count >= 2 else { continue }
+                model.filter = parts[1] == "duplicates" ? .duplicates : .all
+                debugLog("cmd filter \(parts[1])")
             case "click":
                 guard let p = point() else { continue }
                 debugLog("cmd click \(p)")
