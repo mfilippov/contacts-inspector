@@ -177,7 +177,8 @@ enum ContactMerge {
 
     // MARK: - Нормализация
 
-    private static func labeled(_ c: CNContact) -> [(MergeItem, AnyObject)] {
+    /// Значения многозначных полей контакта с их ключами (для объединения и удаления отдельных значений).
+    static func labeled(_ c: CNContact) -> [(MergeItem, AnyObject)] {
         func lbl(_ l: String?) -> String { l.map { CNLabeledValue<NSString>.localizedString(forLabel: $0) } ?? "" }
         func item(_ kind: MergeKind, _ key: String, _ label: String?, _ text: String) -> MergeItem {
             MergeItem(id: kind.rawValue + ":" + key, kind: kind, label: lbl(label), text: text)

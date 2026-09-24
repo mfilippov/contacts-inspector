@@ -478,6 +478,36 @@ final class AppModel: ObservableObject {
         return (done, failed)
     }
 
+    /// Удаляет одно значение многозначного поля (телефон, email, сайт, соцпрофиль…) у контакта.
+    /// Остальное не меняется; копия контакта — в историю.
+    func removeValue(contactId: String, itemId: String) async {
+        guard let c = cnById[contactId] else { return }
+        let note = contact(contactId)?.record.note ?? ""
+        do {
+            try archive([c], action: "remove-value")
+            var base = c
+            // у контакта с заметкой многозначные поля не меняются (134092): заметку временно убираем целиком
+            if !note.isEmpty {
+                try setNoteViaAppleScript(contactId: contactId, note: "")
+                base = try refetch(contactId)
+            }
+            let keep = Set(ContactMerge.labeled(base).map(\.0.id)).subtracting([itemId])
+            let m = ContactMerge.build(primary: base, others: [], scalars: [:], birthday: base.birthday,
+                                       imageFrom: base, keep: keep)
+            let req = CNSaveRequest()
+            req.update(m)
+            do { try store.execute(req) } catch {
+                if !note.isEmpty { try? setNoteViaAppleScript(contactId: contactId, note: note) }
+                throw error
+            }
+            if !note.isEmpty { try setNoteViaAppleScript(contactId: contactId, note: note) }
+            debugLog("removed value \(itemId) from \(contactId)")
+        } catch {
+            errorMessage = "Не удалось удалить значение: \(error)"
+        }
+        await load(silent: true)
+    }
+
     /// Заново читает контакт из базы (например, после удаления заметки через Contacts.app):
     /// у объекта, прочитанного раньше, заметка ещё есть, и сохранить его Contacts.framework не даст (134092).
     func refetch(_ id: String) throws -> CNContact {

@@ -226,17 +226,21 @@ struct CompareView: View {
     }
 }
 
-/// Сравнение пары поле за полем.
+/// Сравнение пары поле за полем; значения многозначных полей — по одному, с удалением на любой стороне.
 private struct CompareDetail: View {
     @EnvironmentObject var model: AppModel
     let row: CompareRow
     let nameA: String
     let nameB: String
 
+    private static let listTitles: Set<String> = ["Телефоны", "Email", "Сайты", "Адреса", "Соцпрофили"]
+
     var body: some View {
         let fa = row.a.flatMap { model.contact($0)?.record }.map(AccountCompare.fields) ?? []
         let fb = row.b.flatMap { model.contact($0)?.record }.map(AccountCompare.fields) ?? []
-        let titles = (fa.isEmpty ? fb : fa).map(\.title)
+        let titles = (fa.isEmpty ? fb : fa).map(\.title).filter { !Self.listTitles.contains($0) }
+        let ca = row.a.flatMap { model.cnContact($0) }
+        let cb = row.b.flatMap { model.cnContact($0) }
         Form {
             ForEach(titles, id: \.self) { title in
                 let a = fa.first { $0.title == title }
@@ -253,7 +257,56 @@ private struct CompareDetail: View {
                     }
                 }
             }
+            ForEach(MergeKind.allCases, id: \.self) { kind in
+                ValuesSection(kind: kind, a: ca, b: cb)
+            }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Значения одного многозначного поля обеих сторон: где есть (A / B) и кнопки удаления.
+private struct ValuesSection: View {
+    @EnvironmentObject var model: AppModel
+    let kind: MergeKind
+    let a: CNContact?
+    let b: CNContact?
+
+    var body: some View {
+        let ia = a.map { ContactMerge.labeled($0).map(\.0).filter { $0.kind == kind } } ?? []
+        let ib = b.map { ContactMerge.labeled($0).map(\.0).filter { $0.kind == kind } } ?? []
+        let idsA = Set(ia.map(\.id)), idsB = Set(ib.map(\.id))
+        let all = ia + ib.filter { !idsA.contains($0.id) }
+        if !all.isEmpty {
+            Section {
+                ForEach(all) { item in
+                    let inA = idsA.contains(item.id), inB = idsB.contains(item.id)
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.text).textSelection(.enabled)
+                                .foregroundStyle(inA && inB ? Color.primary : Color.orange)
+                            Text([item.label, inA && inB ? "в A и B" : (inA ? "только в A" : "только в B")]
+                                .filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if inA, let a {
+                            Button("− A") { Task { await model.removeValue(contactId: a.identifier, itemId: item.id) } }
+                                .help("Удалить это значение в A")
+                        }
+                        if inB, let b {
+                            Button("− B") { Task { await model.removeValue(contactId: b.identifier, itemId: item.id) } }
+                                .help("Удалить это значение в B")
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            } header: {
+                HStack {
+                    Text(kind.title)
+                    if idsA != idsB { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange) }
+                }
+            }
+        }
     }
 }
