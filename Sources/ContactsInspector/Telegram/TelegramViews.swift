@@ -57,11 +57,17 @@ struct TelegramView: View {
                                                              set: { if !$0 { tg.pendingRemove = nil } }), presenting: tg.pendingRemove) { users in
             Button("Удалить", role: .destructive) { Task { await model.deleteTelegramContacts(users) } }
                 .keyboardShortcut(.defaultAction)
+            if case let apple = model.linkedAppleIds(users), !apple.isEmpty {
+                Button("Удалить и контакты Apple (\(apple.count))", role: .destructive) {
+                    Task { await model.deleteEverywhere(telegramUsers: users) }
+                }
+            }
             Button("Отмена", role: .cancel) {}
         } message: { users in
             let names = users.prefix(10).map(\.name).joined(separator: "\n")
             Text(names + (users.count > 10 ? "\n… и ещё \(users.count - 10)" : "")
-                 + "\n\nЧаты и переписка останутся. Копия контактов сохранится в истории.")
+                 + "\n\nЧаты и переписка останутся. Копия контактов сохранится в истории."
+                 + (model.linkedAppleIds(users).isEmpty ? "" : "\n\n«Удалить и контакты Apple» удалит и связанные контакты Apple (из iCloud и со всех устройств)."))
         }
         .alert(createTitle, isPresented: Binding(get: { tg.pendingCreate != nil },
                                                  set: { if !$0 { tg.pendingCreate = nil } }),

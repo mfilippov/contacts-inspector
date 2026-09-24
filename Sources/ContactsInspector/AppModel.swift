@@ -361,6 +361,37 @@ final class AppModel: ObservableObject {
     }
 
     /// Удаляет контакты из Telegram; перед этим сохраняет их в историю (JSON, vCard, фото).
+    /// Пользователи Telegram (из ваших контактов Telegram), связанные с этими контактами Apple.
+    func linkedTelegramUsers(_ appleIds: Set<String>) -> [TGUser] {
+        let m = matcher
+        var seen = Set<Int64>()
+        return appleIds.compactMap { id -> TGUser? in
+            guard let r = contact(id)?.record, case .linked(_, _, let u?, _) = m.status(r), seen.insert(u.id).inserted
+            else { return nil }
+            return u
+        }
+    }
+
+    /// Контакты Apple, связанные с этими пользователями Telegram.
+    func linkedAppleIds(_ users: [TGUser]) -> Set<String> {
+        let m = matcher
+        return Set(users.flatMap { m.appleContacts(for: $0) })
+    }
+
+    /// Удаляет контакты Apple и связанных с ними пользователей из контактов Telegram.
+    func deleteEverywhere(appleIds: Set<String>) async {
+        let tgUsers = linkedTelegramUsers(appleIds)
+        await delete(appleIds)
+        if !tgUsers.isEmpty { await deleteTelegramContacts(tgUsers) }
+    }
+
+    /// Удаляет пользователей из контактов Telegram и связанные с ними контакты Apple.
+    func deleteEverywhere(telegramUsers users: [TGUser]) async {
+        let appleIds = linkedAppleIds(users)
+        await deleteTelegramContacts(users)
+        if !appleIds.isEmpty { await delete(appleIds) }
+    }
+
     func deleteTelegramContacts(_ users: [TGUser]) async {
         guard let telegram, !users.isEmpty else { return }
         do {

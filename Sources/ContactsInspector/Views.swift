@@ -56,9 +56,16 @@ struct RootView: View {
                 model.pendingDelete = nil
             }
             .keyboardShortcut(.defaultAction)
+            if let ids = model.pendingDelete, case let linked = model.linkedTelegramUsers(ids), !linked.isEmpty {
+                Button("Удалить и из Telegram (\(linked.count))", role: .destructive) {
+                    Task { await model.deleteEverywhere(appleIds: ids) }
+                    model.pendingDelete = nil
+                }
+            }
             Button("Отмена", role: .cancel) { model.pendingDelete = nil }
         } message: {
-            Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории.")
+            Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории."
+                 + (model.pendingDelete.map { model.linkedTelegramUsers($0).isEmpty ? "" : "\n\n«Удалить и из Telegram» уберёт связанных пользователей из контактов Telegram (чаты останутся)." } ?? ""))
         }
         .alert("Контакт с заметкой", isPresented: Binding(get: { model.noteBlockedContact != nil },
                                                           set: { if !$0 { model.noteBlockedContact = nil } }),
