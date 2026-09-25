@@ -205,9 +205,11 @@ final class AppModel: ObservableObject {
         if !ids.isEmpty { pendingDelete = ids }
     }
 
-    func delete(_ ids: Set<String>) async {
+    /// Удаляет контакты; копии — в историю. Возвращает false, если что-то пошло не так (ошибка показана).
+    @discardableResult
+    func delete(_ ids: Set<String>) async -> Bool {
         let contacts = ids.compactMap { cnById[$0] }
-        guard !contacts.isEmpty else { return }
+        guard !contacts.isEmpty else { return true }
         do {
             try archive(contacts, action: "delete")
             let (withNote, plain) = split(contacts)
@@ -221,9 +223,11 @@ final class AppModel: ObservableObject {
             debugLog("deleted \(contacts.count)")
             await load(silent: true)
             tableSelection = next.map { [$0] } ?? []
+            return true
         } catch {
             debugLog("delete failed: \(error)")
             errorMessage = "Не удалось удалить: \(error)"
+            return false
         }
     }
 
@@ -769,21 +773,24 @@ final class AppModel: ObservableObject {
     }
 
     /// Удаляет контакты Apple и связанных с ними пользователей из контактов Telegram.
+    /// Сначала Telegram: если там не вышло, необратимое удаление из iCloud не начинаем.
     func deleteEverywhere(appleIds: Set<String>) async {
         let tgUsers = linkedTelegramUsers(appleIds)
+        guard await deleteTelegramContacts(tgUsers) else { return }
         await delete(appleIds)
-        if !tgUsers.isEmpty { await deleteTelegramContacts(tgUsers) }
     }
 
     /// Удаляет пользователей из контактов Telegram и связанные с ними контакты Apple.
     func deleteEverywhere(telegramUsers users: [TGUser]) async {
         let appleIds = linkedAppleIds(users)
-        await deleteTelegramContacts(users)
+        guard await deleteTelegramContacts(users) else { return }
         if !appleIds.isEmpty { await delete(appleIds) }
     }
 
-    func deleteTelegramContacts(_ users: [TGUser]) async {
-        guard let telegram, !users.isEmpty else { return }
+    /// Возвращает false при ошибке (она показана пользователю).
+    @discardableResult
+    func deleteTelegramContacts(_ users: [TGUser]) async -> Bool {
+        guard let telegram, !users.isEmpty else { return true }
         do {
             await telegram.ensurePhotos()
             let fmt = DateFormatter()
@@ -796,8 +803,10 @@ final class AppModel: ObservableObject {
             let next = nextSelection(removing: Set(users.map(\.id)), order: telegram.tableOrder)
             try await telegram.removeContacts(users.map(\.id))
             telegram.selection = next.map { [$0] } ?? []
+            return true
         } catch {
-            errorMessage = "Не удалось удалить контакты Telegram: \(error)"
+            errorMessage = "Не удалось удалить контакты Telegram: \(TelegramService.describe(error))"
+            return false
         }
     }
 
