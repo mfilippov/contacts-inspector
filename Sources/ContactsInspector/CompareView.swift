@@ -24,8 +24,13 @@ struct CompareView: View {
     @AppStorage("compareB") private var accountB = ""
     @State private var mode = Mode.differ
     @State private var selection = Set<String>()
-    @State private var pending: Direction?
-    @State private var pendingDelete: Side?
+    /// Что подтверждает пользователь — со снимком строк на момент нажатия: пока окно открыто,
+    /// строки могут пересчитаться (дочитались фото), и действие должно касаться только показанных.
+    struct PendingTransfer { let direction: Direction; let rows: [CompareRow] }
+    struct PendingDelete { let side: Side; let ids: [String] }
+    @State private var pending: PendingTransfer?
+    @State private var pendingDelete: PendingDelete?
+    @State private var working = false   // перенос или удаление выполняется — кнопки заблокированы
     @State private var sortOrder = [KeyPathComparator(\CompareRow.aName)]
 
     var body: some View {
@@ -59,28 +64,27 @@ struct CompareView: View {
         }
         .navigationTitle("Сравнение аккаунтов")
         .onAppear(perform: defaultAccounts)
-        .alert(deleteTitle(visible), isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
+        .alert(deleteTitle, isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })) {
             Button("Удалить", role: .destructive) {
-                if let side = pendingDelete {
-                    let ids = deleteIds(side, rows: visible)
-                    Task { await model.delete(Set(ids)); selection = [] }
+                if let p = pendingDelete {
+                    Task { working = true; await model.delete(Set(p.ids)); selection = []; working = false }
                 }
                 pendingDelete = nil
             }
             .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) { pendingDelete = nil }
         } message: {
-            Text(deleteMessage(visible))
+            Text(deleteMessage)
         }
-        .alert(alertTitle(visible), isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
+        .alert(alertTitle, isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
             Button("Перенести") {
-                if let d = pending { Task { await apply(d, rows: visible) } }
+                if let p = pending { Task { await apply(p.direction, rows: p.rows) } }
                 pending = nil
             }
             .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) { pending = nil }
         } message: {
-            Text(alertMessage(visible))
+            Text(alertMessage)
         }
     }
 
@@ -101,27 +105,37 @@ struct CompareView: View {
                 }
                 .fixedSize()
                 Spacer()
-                Button("A → B (\(count(.aToB, rows: all[mode, default: []])))") { pending = .aToB }
-                    .disabled(count(.aToB, rows: all[mode, default: []]) == 0)
+                if working { ProgressView().controlSize(.small) }
+                let rows = targets(all[mode, default: []])
+                // пока фото читаются, перенос не делаем: копия без фото не была бы точной
+                let photosPending = model.loadingPhotos
+                Button("A → B (\(count(.aToB, rows: rows)))") { pending = PendingTransfer(direction: .aToB, rows: rows) }
+                    .disabled(count(.aToB, rows: rows) == 0 || photosPending || working)
                     .help("Сделать B таким же, как A: перезаписать пары, скопировать недостающие")
-                Button("B → A (\(count(.bToA, rows: all[mode, default: []])))") { pending = .bToA }
-                    .disabled(count(.bToA, rows: all[mode, default: []]) == 0)
+                Button("B → A (\(count(.bToA, rows: rows)))") { pending = PendingTransfer(direction: .bToA, rows: rows) }
+                    .disabled(count(.bToA, rows: rows) == 0 || photosPending || working)
                     .help("Сделать A таким же, как B")
-                Button("Фото A → B (\(photoPairs(all[mode, default: []]).count))") {
-                    let pairs = photoPairs(all[mode, default: []])
+                Button("Фото A → B (\(photoPairs(rows).count))") {
+                    let pairs = photoPairs(rows)
                     Task {
+                        working = true
                         let r = await model.pushPhotos(pairs)
+                        working = false
                         model.resultMessage = "Фото загружено: \(r.done)" + (r.failed.isEmpty ? "" :
                             "\nНе удалось (\(r.failed.count)):\n" + r.failed.prefix(15).joined(separator: "\n"))
                     }
                 }
-                .disabled(photoPairs(all[mode, default: []]).isEmpty)
+                .disabled(photoPairs(rows).isEmpty || photosPending || working)
                 .help("Заново загрузить фото из A в B — для пар, где в A есть фото")
                 Divider().frame(height: 16)
-                Button("Удалить в A (\(deleteIds(.a, rows: all[mode, default: []]).count))", role: .destructive) { pendingDelete = .a }
-                    .disabled(deleteIds(.a, rows: all[mode, default: []]).isEmpty)
-                Button("Удалить в B (\(deleteIds(.b, rows: all[mode, default: []]).count))", role: .destructive) { pendingDelete = .b }
-                    .disabled(deleteIds(.b, rows: all[mode, default: []]).isEmpty)
+                Button("Удалить в A (\(deleteIds(.a, rows: rows).count))", role: .destructive) {
+                    pendingDelete = PendingDelete(side: .a, ids: deleteIds(.a, rows: rows))
+                }
+                .disabled(deleteIds(.a, rows: rows).isEmpty || working)
+                Button("Удалить в B (\(deleteIds(.b, rows: rows).count))", role: .destructive) {
+                    pendingDelete = PendingDelete(side: .b, ids: deleteIds(.b, rows: rows))
+                }
+                .disabled(deleteIds(.b, rows: rows).isEmpty || working)
             }
             Picker("", selection: $mode) {
                 ForEach(Mode.allCases, id: \.self) { m in Text("\(m.rawValue) (\(all[m, default: []].count))").tag(m) }
@@ -130,7 +144,7 @@ struct CompareView: View {
             if model.loadingPhotos {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("Загружаю фото — пока они не загружены, фото не сравниваются").font(.callout).foregroundStyle(.secondary)
+                    Text("Загружаю фото — пока они не загружены, фото не сравниваются, а перенос недоступен").font(.callout).foregroundStyle(.secondary)
                 }
             }
             if containers.count < 2 {
@@ -171,7 +185,7 @@ struct CompareView: View {
     }
 
     private func count(_ d: Direction, rows: [CompareRow]) -> Int {
-        targets(rows).filter { r in
+        rows.filter { r in
             switch d {
             case .aToB: r.a != nil && (r.b == nil || !r.diff.isEmpty)
             case .bToA: r.b != nil && (r.a == nil || !r.diff.isEmpty)
@@ -179,8 +193,9 @@ struct CompareView: View {
         }.count
     }
 
-    private func apply(_ d: Direction, rows: [CompareRow]) async {
-        let list = targets(rows)
+    private func apply(_ d: Direction, rows list: [CompareRow]) async {
+        working = true
+        defer { working = false }
         let target = d == .aToB ? accountB : accountA
         let pairs = list.compactMap { r -> (target: String, source: String)? in
             guard let a = r.a, let b = r.b, !r.diff.isEmpty else { return nil }
@@ -201,47 +216,56 @@ struct CompareView: View {
             + (failed.count > 15 ? "\n… и ещё \(failed.count - 15)" : ""))
     }
 
-    /// Пары (получатель B, источник A) у строк, к которым применяется действие, где в A есть фото.
+    /// Пары (получатель B, источник A) у строк, где в A есть фото.
     private func photoPairs(_ rows: [CompareRow]) -> [(target: String, source: String)] {
-        targets(rows).compactMap { r in
+        rows.compactMap { r in
             guard let a = r.a, let b = r.b, model.contact(a)?.record.hasImage == true else { return nil }
             return (b, a)
         }
     }
 
-    /// Контакты стороны A или B у строк, к которым применяется действие.
+    /// Контакты стороны A или B у строк.
     private func deleteIds(_ side: Side, rows: [CompareRow]) -> [String] {
-        targets(rows).compactMap { side == .a ? $0.a : $0.b }
+        rows.compactMap { side == .a ? $0.a : $0.b }
     }
 
-    private func deleteTitle(_ rows: [CompareRow]) -> String {
-        guard let side = pendingDelete else { return "" }
-        return "Удалить в «\(name(side == .a ? accountA : accountB))» (\(deleteIds(side, rows: rows).count))?"
+    private func names(_ ids: [String], limit: Int = 12) -> String {
+        let names = ids.compactMap { model.contact($0)?.record.displayName }.sorted()
+        return names.prefix(limit).joined(separator: "\n") + (names.count > limit ? "\n… и ещё \(names.count - limit)" : "")
     }
 
-    private func deleteMessage(_ rows: [CompareRow]) -> String {
-        guard let side = pendingDelete else { return "" }
-        let names = deleteIds(side, rows: rows).compactMap { model.contact($0)?.record.displayName }.sorted()
-        return names.prefix(12).joined(separator: "\n") + (names.count > 12 ? "\n… и ещё \(names.count - 12)" : "")
+    private var deleteTitle: String {
+        guard let p = pendingDelete else { return "" }
+        return "Удалить в «\(name(p.side == .a ? accountA : accountB))» (\(p.ids.count))?"
+    }
+
+    private var deleteMessage: String {
+        guard let p = pendingDelete else { return "" }
+        return names(p.ids)
             + "\n\nКонтакты удалятся из этого аккаунта (и со всех устройств, где он подключён). Копии сохранятся в истории."
     }
 
-    private func alertTitle(_ rows: [CompareRow]) -> String {
-        guard let d = pending else { return "" }
-        let (from, to) = d == .aToB ? (name(accountA), name(accountB)) : (name(accountB), name(accountA))
-        return "Перенести \(from) → \(to) (\(count(d, rows: rows)))?"
+    private var alertTitle: String {
+        guard let p = pending else { return "" }
+        let (from, to) = p.direction == .aToB ? (name(accountA), name(accountB)) : (name(accountB), name(accountA))
+        return "Перенести \(from) → \(to) (\(count(p.direction, rows: p.rows)))?"
     }
 
-    private func alertMessage(_ rows: [CompareRow]) -> String {
-        guard let d = pending else { return "" }
-        let list = targets(rows).filter { d == .aToB ? $0.a != nil : $0.b != nil }
-        let overwrite = list.filter { $0.a != nil && $0.b != nil && !$0.diff.isEmpty }.count
-        let create = list.filter { d == .aToB ? $0.b == nil : $0.a == nil }.count
+    private var alertMessage: String {
+        guard let p = pending else { return "" }
+        let d = p.direction
+        let list = p.rows.filter { d == .aToB ? $0.a != nil : $0.b != nil }
+        let overwrite = list.filter { $0.a != nil && $0.b != nil && !$0.diff.isEmpty }
+        let create = list.filter { d == .aToB ? $0.b == nil : $0.a == nil }
         let to = d == .aToB ? name(accountB) : name(accountA)
         var parts: [String] = []
-        if overwrite > 0 { parts.append("перезаписать в «\(to)»: \(overwrite)") }
-        if create > 0 { parts.append("создать в «\(to)»: \(create)") }
-        return parts.joined(separator: "\n") + "\n\nПерезаписываемые контакты сохранятся в истории. Удаления не выполняются."
+        if !overwrite.isEmpty {
+            parts.append("перезаписать в «\(to)»: \(overwrite.count)\n" + names(overwrite.compactMap { d == .aToB ? $0.b : $0.a }, limit: 8))
+        }
+        if !create.isEmpty {
+            parts.append("создать в «\(to)»: \(create.count)\n" + names(create.compactMap { d == .aToB ? $0.a : $0.b }, limit: 8))
+        }
+        return parts.joined(separator: "\n\n") + "\n\nПерезаписываемые контакты сохранятся в истории. Удаления не выполняются."
     }
 
     private func name(_ id: String) -> String {
@@ -352,9 +376,15 @@ private struct ValuesSection: View {
     let a: CNContact?
     let b: CNContact?
 
+    /// У контакта могут быть два значения с одним ключом (мобильный и WhatsApp) — в списке одна строка.
+    private static func unique(_ items: [MergeItem]) -> [MergeItem] {
+        var seen = Set<String>()
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
     var body: some View {
-        let ia = a.map { ContactMerge.labeled($0).map(\.0).filter { $0.kind == kind } } ?? []
-        let ib = b.map { ContactMerge.labeled($0).map(\.0).filter { $0.kind == kind } } ?? []
+        let ia = Self.unique(a.map { ContactMerge.labeled($0).map(\.0).filter { $0.kind == kind } } ?? [])
+        let ib = Self.unique(b.map { ContactMerge.labeled($0).map(\.0).filter { $0.kind == kind } } ?? [])
         let idsA = Set(ia.map(\.id)), idsB = Set(ib.map(\.id))
         let all = ia + ib.filter { !idsA.contains($0.id) }
         if !all.isEmpty {

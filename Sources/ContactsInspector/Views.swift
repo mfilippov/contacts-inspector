@@ -213,7 +213,8 @@ struct ContactTable: View {
 
     var body: some View {
         let matcher = model.matcher
-        let rows = model.filtered.map { ContactRow($0, telegram: matcher.status($0.record)) }.sorted(using: sortOrder)
+        let rows = model.filtered.map { ContactRow($0, telegram: matcher.status($0.record), account: model.containerName($0.record.containerId)) }
+            .sorted(using: sortOrder)
         Table(of: ContactRow.self, selection: $model.tableSelection, sortOrder: $sortOrder,
               columnCustomization: $columns) {
             nameColumns
@@ -228,13 +229,14 @@ struct ContactTable: View {
                         .font(.callout).foregroundStyle(.secondary)
                     Spacer()
                     Button("Исправить все (\(rows.count))") { confirmFix = true }.buttonStyle(.borderedProminent)
+                        .help(model.search.isEmpty ? "" : "Только показанные (по поиску)")
                 }
                 .padding(8)
                 .background(.bar)
             }
         }
-        .alert("Исправить связи Telegram (\(model.linksNeedingFix.count))?", isPresented: $confirmFix) {
-            Button("Исправить") { Task { await model.fixTelegramLinks(model.linksNeedingFix.map(\.id)) } }
+        .alert("Исправить связи Telegram (\(rows.count))?", isPresented: $confirmFix) {
+            Button("Исправить") { Task { await model.fixTelegramLinks(rows.map(\.id)) } }
                 .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: {
@@ -247,6 +249,10 @@ struct ContactTable: View {
         }
         .onDeleteCommand { model.confirmDelete(model.tableSelection) }
         .onChange(of: rows.map(\.id), initial: true) { _, ids in model.tableOrder = ids }
+        // ушли с редактируемой строки — редактор закрывается, а не висит открытым для другого контакта
+        .onChange(of: model.tableSelection) { _, sel in
+            if let e = model.editingId, sel != [e] { model.editingId = nil }
+        }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Имя, телефон, email, заметка")
         .navigationSubtitle("\(rows.count) шт.")
         .inspector(isPresented: $model.showInspector) {
@@ -325,8 +331,9 @@ struct ContactRow: Identifiable {
     let telegram: String
     let telegramStatus: TGStatus
 
-    init(_ c: AppContact, telegram status: TGStatus = .none) {
+    init(_ c: AppContact, telegram status: TGStatus = .none, account: String = "") {
         telegramStatus = status
+        self.account = account
         switch status {
         case .linked(let id, let username, _, _): telegram = "1 " + (username.map { "@\($0)" } ?? String(id))
         case .suggested(let u): telegram = "2 " + u.name
@@ -356,7 +363,6 @@ struct ContactRow: Identifiable {
         if !r.relations.isEmpty { extra.append("связи \(r.relations.count)") }
         if !r.dates.isEmpty { extra.append("даты \(r.dates.count)") }
         self.extra = extra.joined(separator: ", ")
-        account = r.containerId == "_local:ABAccount" ? "Mac" : "iCloud"
     }
 }
 

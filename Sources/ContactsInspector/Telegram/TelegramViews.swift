@@ -83,8 +83,9 @@ struct TelegramView: View {
             .keyboardShortcut(.defaultAction)
             Button("Отмена", role: .cancel) {}
         } message: { users in
+            let m = model.matcher
             let suggested = users.filter { u in
-                model.contacts.contains { if case .suggested(let s) = model.matcher.status($0.record) { s.id == u.id } else { false } }
+                model.contacts.contains { if case .suggested(let s) = m.status($0.record) { s.id == u.id } else { false } }
             }.count
             Text(users.prefix(10).map(\.name).joined(separator: "\n") + (users.count > 10 ? "\n… и ещё \(users.count - 10)" : "")
                  + "\n\nИмя, телефон, фото, день рождения и связь с Telegram. Аккаунт — по умолчанию (iCloud)."
@@ -501,7 +502,8 @@ private struct TelegramContactsTable: View {
                 }
                 Divider()
                 AutoDeleteMenuItems(userIds: Array(ids))
-                let unlinked = tg.users.filter { ids.contains($0.id) && model.matcher.appleContacts(for: $0).isEmpty }
+                let m = model.matcher
+                let unlinked = tg.users.filter { ids.contains($0.id) && m.appleContacts(for: $0).isEmpty }
                 if !unlinked.isEmpty {
                     Button(unlinked.count > 1 ? "Создать контакты в Apple (\(unlinked.count))…" : "Создать контакт в Apple…") {
                         tg.pendingCreate = unlinked
@@ -512,7 +514,11 @@ private struct TelegramContactsTable: View {
                     tg.pendingRemove = tg.users.filter { ids.contains($0.id) }
                 }
             }
-            .onDeleteCommand { tg.pendingRemove = tg.users.filter { tg.selection.contains($0.id) } }
+            .onDeleteCommand {
+                // выделение таблица при поиске не подрезает — берём только видимые строки
+                let visible = Set(rows.map(\.id)).intersection(tg.selection)
+                if !visible.isEmpty { tg.pendingRemove = tg.users.filter { visible.contains($0.id) } }
+            }
             .onChange(of: rows.map(\.id), initial: true) { _, ids in tg.tableOrder = ids }
             .searchable(text: $search, placement: .toolbar, prompt: "Имя, телефон, username")
         }
