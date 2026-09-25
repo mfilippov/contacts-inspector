@@ -49,80 +49,10 @@ struct RootView: View {
                 .disabled(model.state != .loaded || model.backupInProgress)
             }
         }
-        .alert(deleteTitle, isPresented: Binding(get: { model.pendingDelete != nil },
-                                                             set: { if !$0 { model.pendingDelete = nil } })) {
-            Button("Удалить", role: .destructive) {
-                if let ids = model.pendingDelete { Task { await model.delete(ids) } }
-                model.pendingDelete = nil
-            }
-            .keyboardShortcut(.defaultAction)
-            if let ids = model.pendingDelete, case let linked = model.linkedTelegramUsers(ids), !linked.isEmpty {
-                Button("Удалить и из Telegram (\(linked.count))", role: .destructive) {
-                    Task { await model.deleteEverywhere(appleIds: ids) }
-                    model.pendingDelete = nil
-                }
-            }
-            Button("Отмена", role: .cancel) { model.pendingDelete = nil }
-        } message: {
-            Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории."
-                 + (model.pendingDelete.map { model.linkedTelegramUsers($0).isEmpty ? "" : "\n\n«Удалить и из Telegram» уберёт связанных пользователей из контактов Telegram (чаты останутся)." } ?? ""))
-        }
-        .sheet(item: Binding(get: { model.mergeIds.map { MergeRequest(ids: $0) } }, set: { model.mergeIds = $0?.ids })) { r in
-            MergeSheet(ids: r.ids)
-        }
-        .alert("Перевести имена в латиницу (\(model.pendingTranslit?.count ?? 0))?",
-               isPresented: Binding(get: { model.pendingTranslit != nil }, set: { if !$0 { model.pendingTranslit = nil } }),
-               presenting: model.pendingTranslit) { ids in
-            Button("Перевести") { Task { await model.transliterate(ids) } }
-                .keyboardShortcut(.defaultAction)
-            Button("Отмена", role: .cancel) {}
-        } message: { ids in
-            let lines = ids.prefix(15).compactMap { model.translitPreview($0) }.map { "\($0.from) → \($0.to)" }
-            Text(lines.joined(separator: "\n") + (ids.count > 15 ? "\n… и ещё \(ids.count - 15)" : "")
-                 + "\n\nКириллица будет заменена. Копии контактов сохранятся в истории.")
-        }
-        .alert("Контакт с заметкой", isPresented: Binding(get: { model.noteBlockedContact != nil },
-                                                          set: { if !$0 { model.noteBlockedContact = nil } }),
-               presenting: model.noteBlockedContact) { id in
-            Button("Открыть в Контактах") { model.openInContacts(id) }
-                .keyboardShortcut(.defaultAction)
-            Button("Отмена", role: .cancel) {}
-        } message: { _ in
-            Text("macOS не даёт приложению без специального разрешения Apple сохранять контакты с заметкой. Связь с Telegram и удаление для таких контактов работают через «Контакты», а поля отредактируйте в самих «Контактах».")
-        }
-        .alert("Готово", isPresented: Binding(get: { model.resultMessage != nil },
-                                             set: { if !$0 { model.resultMessage = nil } })) {
-            Button("OK") { model.resultMessage = nil }
-        } message: {
-            Text(model.resultMessage ?? "")
-        }
-        .alert("Ошибка", isPresented: Binding(get: { model.errorMessage != nil },
-                                             set: { if !$0 { model.errorMessage = nil } })) {
-            Button("OK") { model.errorMessage = nil }
-        } message: {
-            Text(model.errorMessage ?? "")
-        }
-        .alert("Бэкап", isPresented: Binding(get: { model.backupMessage != nil },
-                                            set: { if !$0 { model.backupMessage = nil } })) {
-            Button("OK") { model.backupMessage = nil }
-        } message: {
-            Text(model.backupMessage ?? "")
-        }
+        .modifier(RootDialogs())
     }
 }
 
-extension RootView {
-    var deleteTitle: String {
-        let n = model.pendingDelete?.count ?? 0
-        return n == 1 ? "Удалить контакт?" : "Удалить контакты (\(n))?"
-    }
-
-    var deleteMessage: String {
-        let names = (model.pendingDelete ?? []).compactMap { model.contact($0)?.record.displayName }.sorted()
-        let shown = names.prefix(10).joined(separator: "\n")
-        return names.count > 10 ? shown + "\n… и ещё \(names.count - 10)" : shown
-    }
-}
 
 struct BackupBanner: View {
     @EnvironmentObject var model: AppModel
@@ -708,5 +638,105 @@ struct ContactMenuItems: View {
 
     private var cyrillicIds: [String] {
         ids.filter { id in model.contact(id).map { model.hasCyrillicName($0.record) } ?? false }
+    }
+}
+
+/// Окна подтверждений и сообщений главного окна. Вынесены из RootView.body: иначе компилятор
+/// Swift 6.1 (CI) не успевает вывести типы длинной цепочки модификаторов.
+struct RootDialogs: ViewModifier {
+    @EnvironmentObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(DeleteDialogs())
+            .modifier(MessageDialogs())
+    }
+}
+
+extension DeleteDialogs {
+    var deleteTitle: String {
+        let n = model.pendingDelete?.count ?? 0
+        return n == 1 ? "Удалить контакт?" : "Удалить контакты (\(n))?"
+    }
+
+    var deleteMessage: String {
+        let names = (model.pendingDelete ?? []).compactMap { model.contact($0)?.record.displayName }.sorted()
+        let shown = names.prefix(10).joined(separator: "\n")
+        return names.count > 10 ? shown + "\n… и ещё \(names.count - 10)" : shown
+    }
+}
+
+struct DeleteDialogs: ViewModifier {
+    @EnvironmentObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .alert(deleteTitle, isPresented: Binding(get: { model.pendingDelete != nil },
+                                                                 set: { if !$0 { model.pendingDelete = nil } })) {
+                Button("Удалить", role: .destructive) {
+                    if let ids = model.pendingDelete { Task { await model.delete(ids) } }
+                    model.pendingDelete = nil
+                }
+                .keyboardShortcut(.defaultAction)
+                if let ids = model.pendingDelete, case let linked = model.linkedTelegramUsers(ids), !linked.isEmpty {
+                    Button("Удалить и из Telegram (\(linked.count))", role: .destructive) {
+                        Task { await model.deleteEverywhere(appleIds: ids) }
+                        model.pendingDelete = nil
+                    }
+                }
+                Button("Отмена", role: .cancel) { model.pendingDelete = nil }
+            } message: {
+                Text(deleteMessage + "\n\nКонтакты удалятся из iCloud и со всех устройств. Копия сохранится в истории."
+                     + (model.pendingDelete.map { model.linkedTelegramUsers($0).isEmpty ? "" : "\n\n«Удалить и из Telegram» уберёт связанных пользователей из контактов Telegram (чаты останутся)." } ?? ""))
+            }
+            .sheet(item: Binding(get: { model.mergeIds.map { MergeRequest(ids: $0) } }, set: { model.mergeIds = $0?.ids })) { r in
+                MergeSheet(ids: r.ids)
+            }
+            .alert("Перевести имена в латиницу (\(model.pendingTranslit?.count ?? 0))?",
+                   isPresented: Binding(get: { model.pendingTranslit != nil }, set: { if !$0 { model.pendingTranslit = nil } }),
+                   presenting: model.pendingTranslit) { ids in
+                Button("Перевести") { Task { await model.transliterate(ids) } }
+                    .keyboardShortcut(.defaultAction)
+                Button("Отмена", role: .cancel) {}
+            } message: { ids in
+                let lines = ids.prefix(15).compactMap { model.translitPreview($0) }.map { "\($0.from) → \($0.to)" }
+                Text(lines.joined(separator: "\n") + (ids.count > 15 ? "\n… и ещё \(ids.count - 15)" : "")
+                     + "\n\nКириллица будет заменена. Копии контактов сохранятся в истории.")
+            }
+    }
+}
+
+struct MessageDialogs: ViewModifier {
+    @EnvironmentObject var model: AppModel
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Контакт с заметкой", isPresented: Binding(get: { model.noteBlockedContact != nil },
+                                                              set: { if !$0 { model.noteBlockedContact = nil } }),
+                   presenting: model.noteBlockedContact) { id in
+                Button("Открыть в Контактах") { model.openInContacts(id) }
+                    .keyboardShortcut(.defaultAction)
+                Button("Отмена", role: .cancel) {}
+            } message: { _ in
+                Text("macOS не даёт приложению без специального разрешения Apple сохранять контакты с заметкой. Связь с Telegram и удаление для таких контактов работают через «Контакты», а поля отредактируйте в самих «Контактах».")
+            }
+            .alert("Готово", isPresented: Binding(get: { model.resultMessage != nil },
+                                                 set: { if !$0 { model.resultMessage = nil } })) {
+                Button("OK") { model.resultMessage = nil }
+            } message: {
+                Text(model.resultMessage ?? "")
+            }
+            .alert("Ошибка", isPresented: Binding(get: { model.errorMessage != nil },
+                                                 set: { if !$0 { model.errorMessage = nil } })) {
+                Button("OK") { model.errorMessage = nil }
+            } message: {
+                Text(model.errorMessage ?? "")
+            }
+            .alert("Бэкап", isPresented: Binding(get: { model.backupMessage != nil },
+                                                set: { if !$0 { model.backupMessage = nil } })) {
+                Button("OK") { model.backupMessage = nil }
+            } message: {
+                Text(model.backupMessage ?? "")
+            }
     }
 }

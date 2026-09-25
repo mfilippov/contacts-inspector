@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -24,7 +24,11 @@ jobs:
           restore-keys: swiftpm-${{ runner.os }}-
 
       - name: Toolchain
-        run: swift --version
+        run: |
+          # самый свежий Xcode на раннере (Swift 6.1 из Xcode 16 не успевает проверить типы в UI)
+          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          swift --version
 
       - name: Tests
         run: swift test
