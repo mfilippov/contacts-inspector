@@ -52,7 +52,7 @@ enum Translit {
                 i += 1
                 continue
             }
-            if w[i].isUppercase || (i > 0 && w[i - 1].isUppercase && c == "й" && allCaps) {
+            if w[i].isUppercase {
                 piece = allCaps ? piece.uppercased() : piece.prefix(1).uppercased() + piece.dropFirst()
             }
             out += piece

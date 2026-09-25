@@ -178,8 +178,7 @@ final class AppModel: ObservableObject {
                 let req = CNSaveRequest()
                 req.update(m)
                 do { try store.execute(req) } catch {
-                    if !oldNote.isEmpty { try? setNoteViaAppleScript(contactId: id, note: oldNote) }
-                    throw error
+                    throw restoringNote(error, contactId: id, note: oldNote)
                 }
                 if !edit.note.isEmpty { try setNoteViaAppleScript(contactId: id, note: edit.note) }
             } else {
@@ -241,7 +240,7 @@ final class AppModel: ObservableObject {
         let dir = historyDir
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd_HHmmss"
+        fmt.dateFormat = "yyyy-MM-dd_HHmmss.SSS"   // два действия над одним контактом в секунду — разные файлы
         let stamp = fmt.string(from: Date())
         var log = ""
         for c in contacts {
@@ -394,7 +393,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Удаляет контакты из Telegram; перед этим сохраняет их в историю (JSON, vCard, фото).
     /// Редактирует контакт Telegram; перед этим сохраняет его данные в историю.
     func editTelegramContact(_ u: TGUser, firstName: String, lastName: String, note: String?) async -> Bool {
         guard let telegram else { return false }
@@ -567,8 +565,7 @@ final class AppModel: ObservableObject {
                 let req = CNSaveRequest()
                 req.update(m)
                 do { try store.execute(req) } catch {
-                    if !targetNote.isEmpty { try? setNoteViaAppleScript(contactId: t.identifier, note: targetNote) }
-                    throw error
+                    throw restoringNote(error, contactId: t.identifier, note: targetNote)
                 }
                 if !sourceNote.isEmpty { try setNoteViaAppleScript(contactId: t.identifier, note: sourceNote) }
                 done += 1
@@ -589,7 +586,10 @@ final class AppModel: ObservableObject {
         for p in pairs {
             let name = contact(p.target)?.record.displayName ?? p.target
             let data = photo(p.source)
-            guard AccountCompare.isValidImage(data), let jpeg = AccountCompare.standardJPEG(data) else { continue }
+            guard AccountCompare.isValidImage(data), let jpeg = AccountCompare.standardJPEG(data) else {
+                failed.append("\(name): " + (data == nil ? "фото источника не видно с Mac" : "фото источника не читается"))
+                continue
+            }
             do {
                 let m = try refetch(p.target).mutableCopy() as! CNMutableContact
                 m.imageData = jpeg
@@ -624,8 +624,7 @@ final class AppModel: ObservableObject {
             let req = CNSaveRequest()
             req.update(m)
             do { try store.execute(req) } catch {
-                if !note.isEmpty { try? setNoteViaAppleScript(contactId: contactId, note: note) }
-                throw error
+                throw restoringNote(error, contactId: contactId, note: note)
             }
             if !note.isEmpty { try setNoteViaAppleScript(contactId: contactId, note: note) }
             debugLog("removed value \(itemId) from \(contactId)")
@@ -649,9 +648,22 @@ final class AppModel: ObservableObject {
 
     /// Коротко об ошибке для сводки: код и суть без длинного UserInfo.
     static func shortError(_ error: Error) -> String {
+        if let t = error as? ToolError { return t.description }
         let e = error as NSError
         if e.code == 134092 { return "заметка (134092)" }
         return "\(e.domain) \(e.code)"
+    }
+
+    /// Сохранение не удалось после того, как заметку временно убрали: возвращаем её. Если и это не вышло,
+    /// ошибка говорит об обоих — заметка при этом есть в истории.
+    private func restoringNote(_ error: Error, contactId: String, note: String) -> Error {
+        guard !note.isEmpty else { return error }
+        do {
+            try setNoteViaAppleScript(contactId: contactId, note: note)
+            return error
+        } catch let e2 {
+            return ToolError("\(Self.shortError(error)); заметку вернуть не удалось (\(e2)) — она сохранена в истории")
+        }
     }
 
     // MARK: - Транслитерация
@@ -726,8 +738,7 @@ final class AppModel: ObservableObject {
                 req.update(m)
                 try store.execute(req)
             } catch {
-                if !oldNote.isEmpty { try? setNoteViaAppleScript(contactId: primaryId, note: oldNote) }
-                throw error
+                throw restoringNote(error, contactId: primaryId, note: oldNote)
             }
             if note != "" || !oldNote.isEmpty { try setNoteViaAppleScript(contactId: primaryId, note: note) }
             // только после успешного обновления основного — удаляем остальные
@@ -949,7 +960,6 @@ final class AppModel: ObservableObject {
         if c.type == .local { return "На этом Mac (не синхр.)" }
         if !c.name.isEmpty { return c.name }
         switch c.type {
-        case .local: return "На этом Mac"
         case .exchange: return "Exchange"
         case .cardDAV: return "CardDAV"
         default: return "Аккаунт"

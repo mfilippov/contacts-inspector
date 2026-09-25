@@ -39,7 +39,8 @@ struct ContactsInspectorApp: App {
     @StateObject private var telegram = TelegramService()
 
     var body: some Scene {
-        WindowGroup("Contacts Inspector") {
+        // одно окно: второе делило бы с первым выделение и инспектор
+        Window("Contacts Inspector", id: "main") {
             RootView()
                 .environmentObject(model)
                 .environmentObject(telegram)
