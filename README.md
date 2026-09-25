@@ -55,8 +55,12 @@ the app asks for them on first sign-in.
 
 Tests: `swift test`. Icon: `scripts/make-icon.sh`.
 
-**CI:** `.github/workflows/build.yml` runs the tests and builds the `.app` (artifact; attached
-to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+Debug build: `CONFIG=debug ./build-app.sh`. It writes an action log and includes the UI debugging tools
+(`DebugTools.swift`, enabled via `defaults write me.filippov.ContactsInspector debugTools -bool true`).
+The release build contains neither.
+
+**CI:** `.github/workflows/build.yml` runs the tests and builds the `.app` on every push to `master`.
+The zip is attached to a GitHub release on a `v*` tag, or uploaded as an artifact on a manual run. Keys come from the repository secrets `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
 
 ## Data
 
@@ -66,7 +70,7 @@ to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API
 | History of changes | `~/Library/Application Support/ContactsInspector/history` |
 | TDLib database (encrypted) | `~/Library/Application Support/ContactsInspector/telegram` |
 | API keys and database key | Keychain, entry "Contacts Inspector — Telegram API" |
-| Action and error log | `~/Library/Logs/ContactsInspector.log` |
+| Action and error log (debug build only) | `~/Library/Logs/ContactsInspector.log` |
 
 ## Known limitations
 
@@ -87,3 +91,11 @@ to a release on a `v*` tag). Keys come from the repository secrets `TELEGRAM_API
 - **macOS 27:** a `Button` inside a `ScrollView` that is the root of `.inspector` does not receive clicks,
   so the cards use `Form(.grouped)`. Minimal example: `repro/InspectorScrollButton`.
 - The UI is in Russian only for now.
+
+## License
+
+[Apache License 2.0](LICENSE).
+
+Third-party components:
+- [TDLibKit](https://github.com/Swiftgram/TDLibKit): MIT License, Copyright (c) 2021 Sergey Akentev;
+- [TDLib](https://github.com/tdlib/td): Boost Software License 1.0.
