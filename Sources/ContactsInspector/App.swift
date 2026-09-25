@@ -24,7 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
         AppAppearance.current.apply()
+        #if DEBUG
         DebugTools.shared.installIfEnabled()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -44,7 +46,9 @@ struct ContactsInspectorApp: App {
                 .frame(minWidth: 1000, minHeight: 600)
                 .task {
                     model.telegram = telegram
+                    #if DEBUG
                     DebugTools.shared.model = model
+                    #endif
                     delegate.telegram = telegram
                     if model.state == .idle { await model.load() }
                     if telegram.hasSession { telegram.start() }

@@ -273,8 +273,11 @@ struct ToolError: Error, CustomStringConvertible {
     init(_ d: String) { description = d }
 }
 
-/// Пошаговый лог в ~/Library/Logs/ContactsInspector.log — для диагностики.
-func debugLog(_ msg: String) {
+/// Журнал действий и ошибок в ~/Library/Logs/ContactsInspector.log — только в отладочной сборке
+/// (в журнале имена контактов и ID; в релизе ничего не пишется).
+func debugLog(_ msg: @autoclosure () -> String) {
+    #if DEBUG
+    let msg = msg()
     let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/ContactsInspector.log")
     let line = "\(Date().formatted(.iso8601)) \(msg)\n"
     if let h = try? FileHandle(forWritingTo: url) {
@@ -282,4 +285,5 @@ func debugLog(_ msg: String) {
     } else {
         try? line.write(to: url, atomically: true, encoding: .utf8)
     }
+    #endif
 }

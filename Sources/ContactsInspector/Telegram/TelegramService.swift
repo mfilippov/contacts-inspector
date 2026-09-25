@@ -102,11 +102,13 @@ final class TelegramService: ObservableObject {
     private var config: TelegramConfig?
 
     init() {
+        #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugNoTelegram") {   // отладка: не трогаем Keychain
             config = nil
             auth = .notConfigured
             return
         }
+        #endif
         var c = TelegramConfig.load()
         if let b = TelegramConfig.bundledCredentials(), c?.apiId != b.apiId || c?.apiHash != b.apiHash {
             // Ключи встроены в приложение — пользователю вводить их не нужно.

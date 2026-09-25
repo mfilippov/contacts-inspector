@@ -1,6 +1,7 @@
+#if DEBUG
 import AppKit
 
-/// Отладочные инструменты (включаются через defaults, в обычной работе выключены):
+/// Отладочные инструменты — только в отладочной сборке (CONFIG=debug ./build-app.sh), включаются через defaults:
 ///   debugSnapshots — раз в 2 с снимок окна в ~/Library/Logs/ContactsInspector-snap.png
 ///   debugTools     — лог активации окна и кликов (с hit-test view) + команды из файла
 ///                    ~/Library/Logs/ContactsInspector-cmd.txt:
@@ -140,3 +141,4 @@ final class DebugTools {
         NSApp.sendEvent(down)
     }
 }
+#endif

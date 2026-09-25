@@ -1,13 +1,16 @@
 #!/bin/zsh
-# Собирает "build/Contacts Inspector.app" (release, ad-hoc подпись).
+# Собирает "build/Contacts Inspector.app" (ad-hoc подпись).
+# По умолчанию release — без отладочных инструментов и журнала.
+# CONFIG=debug ./build-app.sh — отладочная сборка: журнал ~/Library/Logs/ContactsInspector.log и DebugTools.
 set -euo pipefail
 cd "$(dirname "$0")"
 # Иконка пересобирается отдельно: scripts/make-icon.sh
-swift build -c release
+CONFIG="${CONFIG:-release}"
+swift build -c "$CONFIG"
 APP="build/Contacts Inspector.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$(swift build -c release --show-bin-path)/ContactsInspector" "$APP/Contents/MacOS/"
+cp "$(swift build -c "$CONFIG" --show-bin-path)/ContactsInspector" "$APP/Contents/MacOS/"
 cp Info.plist "$APP/Contents/"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 # Ключи Telegram API: из окружения (TELEGRAM_API_ID/TELEGRAM_API_HASH, так делает CI)
@@ -23,4 +26,4 @@ else
     echo "Ключи Telegram API не заданы — в приложении будет ручной ввод"
 fi
 codesign --force --sign - "$APP"
-echo "Готово: $APP"
+echo "Готово ($CONFIG): $APP"
