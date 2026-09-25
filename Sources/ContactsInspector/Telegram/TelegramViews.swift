@@ -6,6 +6,7 @@ import SwiftUI
 struct TelegramView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var tg: TelegramService
+    @State private var confirmReset = false
 
     var body: some View {
         Group {
@@ -35,6 +36,21 @@ struct TelegramView: View {
                              note: hint.isEmpty ? "" : "Подсказка: \(hint)", secure: true) { tg.submitPassword($0) }
             case .unsupported(let msg):
                 ContentUnavailableView("Вход не завершён", systemImage: "exclamationmark.triangle", description: Text(msg))
+            case .failed(let msg):
+                ContentUnavailableView {
+                    Label("Telegram недоступен", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(msg)
+                } actions: {
+                    Button("Повторить") { tg.retry() }.buttonStyle(.borderedProminent)
+                    Button("Сбросить данные Telegram…") { confirmReset = true }
+                }
+                .alert("Сбросить данные Telegram?", isPresented: $confirmReset) {
+                    Button("Сбросить", role: .destructive) { Task { await tg.resetData() } }
+                    Button("Отмена", role: .cancel) {}
+                } message: {
+                    Text("Удалится локальная база TDLib (кэш контактов и чатов на этом Mac). Контакты и чаты в Telegram не пострадают, но войти придётся заново.")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -21,17 +21,19 @@ struct TelegramConfig: Codable {
         kSecAttrAccount as String: "config",
     ]
 
-    static func load() -> TelegramConfig? {
+    /// nil — записи ещё нет. Бросает, если связка ключей недоступна (например, пользователь отказал
+    /// в доступе): в этом случае нельзя заводить новый ключ базы — старая база им не откроется.
+    static func load() throws -> TelegramConfig? {
         var q = query
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: AnyObject?
         let status = SecItemCopyMatching(q as CFDictionary, &out)
+        if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = out as? Data else {
-            if status != errSecItemNotFound { debugLog("keychain load: \(status)") }
-            return nil
+            throw ToolError("Keychain: \(SecCopyErrorMessageString(status, nil) as String? ?? "\(status)")")
         }
-        return try? JSONDecoder().decode(TelegramConfig.self, from: data)
+        return try JSONDecoder().decode(TelegramConfig.self, from: data)
     }
 
     func save() throws {
@@ -42,7 +44,6 @@ struct TelegramConfig: Codable {
             var add = Self.query
             add[kSecValueData as String] = data
             add[kSecAttrLabel as String] = "Contacts Inspector — Telegram API"
-            add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
             status = SecItemAdd(add as CFDictionary, nil)
         }
         guard status == errSecSuccess else {
@@ -64,7 +65,8 @@ struct TelegramConfig: Codable {
 
     static func randomKey() -> Data {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        precondition(status == errSecSuccess, "SecRandomCopyBytes: \(status)")   // нулевым ключом базу не шифруем
         return Data(bytes)
     }
 }
@@ -78,6 +80,7 @@ enum TGAuth: Equatable {
     case waitCode(String)   // описание, куда отправлен код
     case waitPassword(String)  // подсказка к паролю
     case unsupported(String)   // шаги входа, которые приложение не поддерживает
+    case failed(String)        // связка ключей недоступна или TDLib не приняла параметры — можно повторить или сбросить
     case ready
     case loggingOut
 }
@@ -109,7 +112,18 @@ final class TelegramService: ObservableObject {
             return
         }
         #endif
-        var c = TelegramConfig.load()
+        auth = .signedOut
+        loadConfig()
+    }
+
+    /// Читает ключи из связки ключей; встроенные в сборку ключи имеют приоритет.
+    private func loadConfig() {
+        var c: TelegramConfig?
+        do { c = try TelegramConfig.load() } catch {
+            config = nil
+            auth = .failed("Связка ключей недоступна: \(error). Разрешите доступ (кнопка «Повторить») или сбросьте данные Telegram.")
+            return
+        }
         if let b = TelegramConfig.bundledCredentials(), c?.apiId != b.apiId || c?.apiHash != b.apiHash {
             // Ключи встроены в приложение — пользователю вводить их не нужно.
             c = TelegramConfig(apiId: b.apiId, apiHash: b.apiHash, databaseKey: c?.databaseKey ?? TelegramConfig.randomKey())
@@ -119,13 +133,36 @@ final class TelegramService: ObservableObject {
         auth = config == nil ? .notConfigured : .signedOut
     }
 
+    /// После ошибки: ещё раз читает связку ключей и запускает TDLib.
+    func retry() {
+        client = nil
+        loadConfig()
+        if config != nil { start() }
+    }
+
+    /// Сбрасывает локальные данные Telegram (базу TDLib и ключ от неё). Нужен новый вход.
+    func resetData() async {
+        await shutdown()
+        client = nil
+        try? FileManager.default.removeItem(at: TelegramConfig.dir)
+        users = []; chats = [:]; chatUser = [:]; fullInfoCache = [:]; selection = []; tableOrder = []
+        if var c = config {
+            c.databaseKey = TelegramConfig.randomKey()
+            do { try c.save() } catch { debugLog("telegram config save: \(error)") }
+            config = c
+            auth = .signedOut
+        } else {
+            loadConfig()
+        }
+    }
+
     /// Если уже входили раньше — база TDLib на месте, запускаемся автоматически.
     var hasSession: Bool {
         config != nil && FileManager.default.fileExists(atPath: TelegramConfig.dir.appendingPathComponent("db/td.binlog").path)
     }
 
     func configure(apiId: Int, apiHash: String) {
-        let c = TelegramConfig(apiId: apiId, apiHash: apiHash.trimmingCharacters(in: .whitespaces),
+        let c = TelegramConfig(apiId: apiId, apiHash: apiHash.trimmingCharacters(in: .whitespacesAndNewlines),
                                databaseKey: config?.databaseKey ?? TelegramConfig.randomKey())
         do {
             try c.save()
@@ -150,11 +187,11 @@ final class TelegramService: ObservableObject {
         }
     }
 
-    /// Штатно закрывает TDLib: `close` и ожидание authorizationStateClosed (не дольше 5 с).
+    /// Штатно закрывает TDLib: `close` и ожидание authorizationStateClosed (не дольше 15 с).
     func shutdown() async {
         guard let client else { return }
         _ = try? await client.close()
-        for _ in 0..<50 where self.client != nil {
+        for _ in 0..<150 where self.client != nil {
             try? await Task.sleep(for: .milliseconds(100))
         }
         debugLog("telegram shutdown: \(self.client == nil ? "closed" : "timeout")")
@@ -240,7 +277,13 @@ final class TelegramService: ObservableObject {
             users = []
             chats = [:]
             chatUser = [:]
-            auth = config == nil ? .notConfigured : .signedOut
+            fullInfoCache = [:]   // после входа в другой аккаунт кэш прошлого не должен всплывать
+            selection = []
+            tableOrder = []
+            pendingAutoDelete = nil
+            pendingRemove = nil
+            pendingCreate = nil
+            if case .failed = auth {} else { auth = config == nil ? .notConfigured : .signedOut }
         case .authorizationStateWaitEmailAddress, .authorizationStateWaitEmailCode:
             auth = .unsupported("Telegram просит подтвердить email — сделайте это в официальном клиенте и попробуйте снова.")
         case .authorizationStateWaitRegistration:
@@ -269,7 +312,8 @@ final class TelegramService: ObservableObject {
                 useChatInfoDatabase: true, useFileDatabase: true, useMessageDatabase: false,
                 useSecretChats: false, useTestDc: false)
         } catch {
-            lastError = Self.describe(error)
+            // без параметров TDLib дальше не идёт (обычно — не подошёл ключ базы): не висим на «Подключаюсь…»
+            auth = .failed("TDLib не приняла параметры: \(Self.describe(error)). Обычно помогает сброс данных Telegram.")
         }
     }
 
@@ -485,7 +529,10 @@ final class TelegramService: ObservableObject {
     // MARK: - Описания
 
     static func describe(_ error: Swift.Error) -> String {
-        if let e = error as? TDLibKit.Error { return "\(e.message) (\(e.code))" }
+        if let e = error as? TDLibKit.Error {
+            // по документации TDLib текст ошибки 406 показывать пользователю нельзя
+            return e.code == 406 ? "Ошибка Telegram (406)" : "\(e.message) (\(e.code))"
+        }
         return "\(error)"
     }
 
