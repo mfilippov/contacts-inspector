@@ -1,0 +1,11 @@
+# Обновления зависимостей отдельными PR: GitHub Actions и пакеты SwiftPM (TDLibKit → новая TDLib).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: swift
+    directory: /
+    schedule:
+      interval: weekly
