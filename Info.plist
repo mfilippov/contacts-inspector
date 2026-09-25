@@ -18,6 +18,8 @@
 	<string>0.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>NSAppleEventsUsageDescription</key>
@@ -26,5 +28,7 @@
 	<string>Просмотр, бэкап и чистка контактов перед миграцией.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Mikhail Filippov. Apache License 2.0.</string>
 </dict>
 </plist>

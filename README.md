@@ -39,19 +39,20 @@ It was built for moving from iPhone to Android: tidy up the address book before 
 ## Requirements
 
 - macOS 15 or newer (developed and tested on macOS 27);
-- Xcode / Swift 6 toolchain.
+- Xcode 26 or newer (CI builds with the newest Xcode on `macos-26`; Xcode 16 / Swift 6.1 cannot type-check the UI).
 
 ## Build
 
 ```sh
-cp telegram-api.env.example telegram-api.env   # keys from https://my.telegram.org/apps
+cp telegram-api.env.example telegram-api.env   # then put your own keys from https://my.telegram.org/apps into it
 ./build-app.sh                                  # → build/Contacts Inspector.app
 ditto "build/Contacts Inspector.app" "/Applications/Contacts Inspector.app"
 ```
 
 Telegram API keys are embedded into `Info.plist` at build time: from the `TELEGRAM_API_ID` /
-`TELEGRAM_API_HASH` environment variables or from `telegram-api.env` (not in git). Without keys,
-the app asks for them on first sign-in.
+`TELEGRAM_API_HASH` environment variables or from `telegram-api.env` (not in git). The script refuses
+the placeholder values from the example file. Without keys, the app asks for them on first sign-in.
+Like any third-party Telegram client, a distributed build carries its `api_hash` in plain text.
 
 Tests: `swift test`. Icon: `scripts/make-icon.sh`.
 
@@ -60,7 +61,8 @@ Debug build: `CONFIG=debug ./build-app.sh`. It writes an action log and includes
 The release build contains neither.
 
 **CI:** `.github/workflows/build.yml` runs the tests and builds the `.app` on every push to `master`.
-The zip is attached to a GitHub release on a `v*` tag, or uploaded as an artifact on a manual run. Keys come from the repository secrets `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+On a `v*` tag the zip is attached to a GitHub release (the tag sets the bundle version); on a manual run
+it is uploaded as an artifact. Keys come from the repository secrets `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
 
 ## Data
 
@@ -94,8 +96,9 @@ The zip is attached to a GitHub release on a `v*` tag, or uploaded as an artifac
 
 ## License
 
-[Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE), © 2026 Mikhail Filippov.
 
-Third-party components:
-- [TDLibKit](https://github.com/Swiftgram/TDLibKit): MIT License, Copyright (c) 2021 Sergey Akentev;
-- [TDLib](https://github.com/tdlib/td): Boost Software License 1.0.
+Third-party components (full texts in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), also bundled into the app):
+- [TDLibKit](https://github.com/Swiftgram/TDLibKit) and [TDLibFramework](https://github.com/Swiftgram/TDLibFramework): MIT License, Sergey Akentev;
+- [TDLib](https://github.com/tdlib/td): Boost Software License 1.0;
+- [OpenSSL](https://www.openssl.org) 3.1.5 (statically linked into TDLibFramework): Apache License 2.0.
