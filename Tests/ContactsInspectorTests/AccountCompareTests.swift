@@ -73,6 +73,15 @@ final class ImageValidityTests: XCTestCase {
         AccountCompare.fill(m, from: s.copy() as! CNContact)
         XCTAssertEqual(m.imageData, Data([0xFF, 0xD8, 0xFF]), "битое фото источника не затирает фото получателя")
     }
+
+    func testFillPhotoMissingVersusUnknown() {
+        let s = CNMutableContact()   // у источника фото нет
+        let m = CNMutableContact(); m.imageData = Data([0xFF, 0xD8, 0xFF])
+        AccountCompare.fill(m, from: s.copy() as! CNContact, photoUnknown: true)
+        XCTAssertEqual(m.imageData, Data([0xFF, 0xD8, 0xFF]), "фото источника неизвестно (Google, ещё читается) — получателя не трогаем")
+        AccountCompare.fill(m, from: s.copy() as! CNContact)
+        XCTAssertNil(m.imageData, "фото источника точно нет — точная копия без фото")
+    }
 }
 
 final class StandardJPEGTests: XCTestCase {

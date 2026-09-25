@@ -68,6 +68,17 @@ final class MergeTests: XCTestCase {
         XCTAssertTrue(m.phoneNumbers.allSatisfy { ($0.value as AnyObject) is CNPhoneNumber })
     }
 
+    func testRemovingKeepsSameKeyValues() {
+        // два разных телефона с одним ключом (мобильный и WhatsApp) и email — удаление email не должно их схлопнуть
+        let c = contact("Иван", phones: ["+7 900 123-45-67", "8 900 123 45 67"], emails: ["a@x.ru"])
+        let emailId = ContactMerge.labeled(c).first { $0.0.kind == .email }!.0.id
+        let m = ContactMerge.removing(emailId, from: c)
+        XCTAssertTrue(m.emailAddresses.isEmpty)
+        XCTAssertEqual(m.phoneNumbers.map(\.identifier), c.phoneNumbers.map(\.identifier), "телефоны остались как были")
+        let phoneId = ContactMerge.labeled(c).first { $0.0.kind == .phone }!.0.id
+        XCTAssertTrue(ContactMerge.removing(phoneId, from: c).phoneNumbers.isEmpty, "строка с этим ключом — оба значения")
+    }
+
     func testMergedNote() {
         XCTAssertEqual(ContactMerge.mergedNote(["a", nil, " a ", "b"]), "a\n\nb")
     }

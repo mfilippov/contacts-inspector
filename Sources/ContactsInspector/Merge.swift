@@ -166,6 +166,28 @@ enum ContactMerge {
         return m
     }
 
+    /// Копия контакта без значений с ключом itemId. Остальные значения остаются как есть — в отличие от
+    /// build, здесь ничего не дедуплицируется: у контакта могут быть два разных телефона с одним ключом.
+    static func removing(_ itemId: String, from c: CNContact) -> CNMutableContact {
+        let m = c.mutableCopy() as! CNMutableContact
+        let drop = Set(labeled(c).filter { $0.0.id == itemId }.compactMap { identifier($0.1) })
+        m.phoneNumbers.removeAll { drop.contains($0.identifier) }
+        m.emailAddresses.removeAll { drop.contains($0.identifier) }
+        m.urlAddresses.removeAll { drop.contains($0.identifier) }
+        m.postalAddresses.removeAll { drop.contains($0.identifier) }
+        m.socialProfiles.removeAll { drop.contains($0.identifier) }
+        m.instantMessageAddresses.removeAll { drop.contains($0.identifier) }
+        m.contactRelations.removeAll { drop.contains($0.identifier) }
+        m.dates.removeAll { drop.contains($0.identifier) }
+        return m
+    }
+
+    /// identifier значения из labeled(). Параметр обобщённого класса Objective-C стирается, поэтому
+    /// приведение к CNLabeledValue<NSString> проходит для значения любого вида.
+    static func identifier(_ lv: AnyObject) -> String? {
+        (lv as? CNLabeledValue<NSString>)?.identifier
+    }
+
     /// Объединённая заметка: различные непустые заметки через пустую строку.
     static func mergedNote(_ notes: [String?]) -> String {
         var out: [String] = []

@@ -156,23 +156,34 @@ final class AppModel: ObservableObject {
         var originalWithoutNote = original
         originalWithoutNote.note = oldNote
         let fieldsChanged = withoutNote != originalWithoutNote
-        // Контакт с заметкой Contacts.framework не сохраняет (134092); заметку пишем через Contacts.app,
-        // а поля — только если заметку при этом очищают.
-        if !viaAPI, !oldNote.isEmpty, fieldsChanged, !edit.note.isEmpty {
-            noteBlockedContact = id
-            return false
-        }
+        guard fieldsChanged || noteChanged else { editingId = nil; return true }
         do {
             try archive([c], action: "edit")
-            if noteChanged, !viaAPI {
-                try setNoteViaAppleScript(contactId: id, note: edit.note)
-            }
-            if fieldsChanged || (noteChanged && viaAPI) {
+            if viaAPI {
                 let m = try edit.apply(to: c)
-                if noteChanged, viaAPI { m.note = edit.note }
+                m.note = edit.note
                 let req = CNSaveRequest()
                 req.update(m)
                 try store.execute(req)
+            } else if fieldsChanged {
+                // Без права на заметки Contacts.framework не сохраняет многозначные поля контакта с заметкой
+                // (134092), даже если заметку только что добавили: сначала заметку убираем целиком,
+                // перечитываем контакт, сохраняем поля, потом пишем заметку через Contacts.app.
+                var base = c
+                if !oldNote.isEmpty {
+                    try setNoteViaAppleScript(contactId: id, note: "")
+                    base = try refetch(id)
+                }
+                let m = try edit.apply(to: base)
+                let req = CNSaveRequest()
+                req.update(m)
+                do { try store.execute(req) } catch {
+                    if !oldNote.isEmpty { try? setNoteViaAppleScript(contactId: id, note: oldNote) }
+                    throw error
+                }
+                if !edit.note.isEmpty { try setNoteViaAppleScript(contactId: id, note: edit.note) }
+            } else {
+                try setNoteViaAppleScript(contactId: id, note: edit.note)
             }
             debugLog("saved \(id) (fields: \(fieldsChanged), note: \(noteChanged))")
             editingId = nil
@@ -231,7 +242,7 @@ final class AppModel: ObservableObject {
         var log = ""
         for c in contacts {
             let note = contact(c.identifier)?.record.note
-            let vcard = try vcardString(for: c, note: note)
+            let vcard = try vcardString(for: c, note: note, photo: photo(c.identifier))
             let file = "\(stamp)_\(action)_\(safeFileName(c.identifier)).vcf"
             try vcard.write(to: dir.appendingPathComponent(file), atomically: true, encoding: .utf8)
             log += "\(stamp)\t\(action)\t\(contact(c.identifier)?.record.displayName ?? "?")\t\(file)\n"
@@ -483,6 +494,12 @@ final class AppModel: ObservableObject {
         photo(id) == nil && isGoogle(contact(id)?.record.containerId)
     }
 
+    /// Про фото контакта ничего не известно: фото ещё читаются через Contacts.app или его не видно с Mac.
+    /// При переносе такое «отсутствие» фото не должно затирать фото получателя.
+    func photoUnknown(_ id: String) -> Bool {
+        photo(id) == nil && (loadingPhotos || photoHiddenOnMac(id))
+    }
+
     func records(in container: String) -> [ContactRecord] {
         contacts.map(\.record).filter { $0.containerId == container }
     }
@@ -499,7 +516,7 @@ final class AppModel: ObservableObject {
             let name = contact(s.identifier)?.record.displayName ?? s.identifier
             do {
                 let m = CNMutableContact()
-                AccountCompare.fill(m, from: s, photo: photo(s.identifier))
+                AccountCompare.fill(m, from: s, photo: photo(s.identifier), photoUnknown: photoUnknown(s.identifier))
                 let req = CNSaveRequest()
                 req.add(m, toContainerWithIdentifier: container)
                 try store.execute(req)
@@ -542,7 +559,7 @@ final class AppModel: ObservableObject {
                     fresh = try refetch(t.identifier)
                 }
                 let m = fresh.mutableCopy() as! CNMutableContact
-                AccountCompare.fill(m, from: s, photo: photo(s.identifier))
+                AccountCompare.fill(m, from: s, photo: photo(s.identifier), photoUnknown: photoUnknown(s.identifier))
                 let req = CNSaveRequest()
                 req.update(m)
                 do { try store.execute(req) } catch {
@@ -587,7 +604,7 @@ final class AppModel: ObservableObject {
     }
 
     /// Удаляет одно значение многозначного поля (телефон, email, сайт, соцпрофиль…) у контакта.
-    /// Остальное не меняется; копия контакта — в историю.
+    /// Остальное не меняется (в том числе другие значения с тем же ключом); копия контакта — в историю.
     func removeValue(contactId: String, itemId: String) async {
         guard let c = cnById[contactId] else { return }
         let note = contact(contactId)?.record.note ?? ""
@@ -599,9 +616,7 @@ final class AppModel: ObservableObject {
                 try setNoteViaAppleScript(contactId: contactId, note: "")
                 base = try refetch(contactId)
             }
-            let keep = Set(ContactMerge.labeled(base).map(\.0.id)).subtracting([itemId])
-            let m = ContactMerge.build(primary: base, others: [], scalars: [:], birthday: base.birthday,
-                                       imageData: base.imageData, keep: keep)
+            let m = ContactMerge.removing(itemId, from: base)
             let req = CNSaveRequest()
             req.update(m)
             do { try store.execute(req) } catch {

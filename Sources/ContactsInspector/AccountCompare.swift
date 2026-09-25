@@ -95,7 +95,9 @@ enum AccountCompare {
 
     /// Копирует содержимое контакта (без identifier'ов) в изменяемый контакт — новый или существующий.
     /// photo — фото источника, если Contacts.framework его не видит (прочитано через Contacts.app).
-    static func fill(_ m: CNMutableContact, from s: CNContact, photo: Data? = nil) {
+    /// photoUnknown — фото источника неизвестно (ещё читается или это Google-контакт, чьи фото на Mac
+    /// не приходят): фото получателя тогда не трогаем, иначе «нет фото» затёрло бы его.
+    static func fill(_ m: CNMutableContact, from s: CNContact, photo: Data? = nil, photoUnknown: Bool = false) {
         m.contactType = s.contactType
         m.namePrefix = s.namePrefix; m.givenName = s.givenName; m.middleName = s.middleName
         m.familyName = s.familyName; m.previousFamilyName = s.previousFamilyName; m.nameSuffix = s.nameSuffix
@@ -116,6 +118,7 @@ enum AccountCompare {
         m.dates = fresh(s.dates)
         // Битое «фото» (не изображение — например, текст «Unable to read recordID») не переносим:
         // iCloud отказывается его сохранять (134040). Фото получателя тогда остаётся как есть.
+        if photoUnknown { return }
         let image = photo ?? s.imageData
         if image == nil { m.imageData = nil }
         else if isValidImage(image) { m.imageData = standardJPEG(image) ?? image }
