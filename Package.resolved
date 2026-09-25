@@ -1,12 +1,13 @@
 {
+  "originHash" : "6c52277de3ed93547090c9d34d627bb425655a8a233a4f9757df8ebd598be9ec",
   "pins" : [
     {
       "identity" : "tdlibframework",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Swiftgram/TDLibFramework",
       "state" : {
-        "revision" : "f3a6a83864662ead4843ec1ec49dc0829d912c57",
-        "version" : "1.8.67-738ae316"
+        "revision" : "067106037c5f896120752e76ff9fb45661c00a27",
+        "version" : "1.8.67-ea97bcdd"
       }
     },
     {
@@ -14,10 +15,10 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Swiftgram/TDLibKit",
       "state" : {
-        "revision" : "4332967ff39dee63aa2806e08218613cea0236f7",
-        "version" : "1.5.2-tdlib-1.8.67-738ae316"
+        "revision" : "50edee0bf1948586f40f3c05ef3fd6a65332a790",
+        "version" : "1.5.2-tdlib-1.8.67-ea97bcdd"
       }
     }
   ],
-  "version" : 2
+  "version" : 3
 }
