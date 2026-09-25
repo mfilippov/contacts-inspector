@@ -50,6 +50,15 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(m.birthday?.month, 2)
     }
 
+    func testEqualityIgnoresRowIds() {
+        // форма сравнивается с состоянием при открытии, которое пересобирается при каждом обновлении списка
+        let c = sample()
+        XCTAssertEqual(EditableContact(c, note: "n"), EditableContact(c, note: "n"))
+        var e = EditableContact(c, note: nil)
+        e.phones[0].label = CNLabelWork
+        XCTAssertNotEqual(e, EditableContact(c, note: nil))
+    }
+
     func testClearBirthdayAndBadFormat() throws {
         let c = sample()
         var e = EditableContact(c, note: nil)

@@ -3,11 +3,17 @@ import Foundation
 
 /// Редактируемое значение с меткой. originalId — identifier исходного CNLabeledValue
 /// (сохраняем его при правке, чтобы синхронизация видела изменение, а не удаление+добавление).
+/// id — только для ForEach в форме; в сравнение (==) не входит: форма сравнивается с состоянием при
+/// открытии, а оно пересобирается при каждом обновлении списка и получает новые id.
 struct EditLabeled: Identifiable, Equatable {
     let id = UUID()
     var originalId: String?
     var label: String
     var value: String
+
+    static func == (l: Self, r: Self) -> Bool {
+        l.originalId == r.originalId && l.label == r.label && l.value == r.value
+    }
 }
 
 struct EditAddress: Identifiable, Equatable {
@@ -15,6 +21,11 @@ struct EditAddress: Identifiable, Equatable {
     var originalId: String?
     var label: String
     var street = "", city = "", state = "", postalCode = "", country = ""
+
+    static func == (l: Self, r: Self) -> Bool {
+        l.originalId == r.originalId && l.label == r.label && l.street == r.street && l.city == r.city
+            && l.state == r.state && l.postalCode == r.postalCode && l.country == r.country
+    }
 }
 
 /// Значение, которое можно только удалить (соцпрофили, мессенджеры, прочие даты).
@@ -22,6 +33,8 @@ struct EditRemovable: Identifiable, Equatable {
     let id = UUID()
     var originalId: String
     var text: String
+
+    static func == (l: Self, r: Self) -> Bool { l.originalId == r.originalId && l.text == r.text }
 }
 
 struct EditableContact: Equatable {
