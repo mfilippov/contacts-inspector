@@ -11,6 +11,20 @@ final class TelegramLinkTests: XCTestCase {
         XCTAssertNil(TelegramLink.phoneKey("112"))
     }
 
+    func testSamePhoneRespectsCountryCode() {
+        XCTAssertTrue(TelegramLink.samePhone("+7 (900) 123-45-67", "79001234567"))
+        XCTAssertTrue(TelegramLink.samePhone("8 900 123 45 67", "79001234567"))
+        XCTAssertTrue(TelegramLink.samePhone("900 123 45 67", "79001234567"), "без кода страны — по последним 10 цифрам")
+        XCTAssertFalse(TelegramLink.samePhone("+380 50 123 45 67", "70501234567"), "одинаковый хвост, разные страны")
+        XCTAssertFalse(TelegramLink.samePhone("+44 20 7946 0958", "+1 207 946 0958"))
+    }
+
+    func testNoSuggestionAcrossCountries() {
+        let m = TelegramMatcher(users: [user(1, "70501234567")], records: [])
+        XCTAssertEqual(m.status(record(id: "ua", phones: ["+380 50 123 45 67"])), .none)
+        XCTAssertEqual(m.status(record(id: "ru", phones: ["+7 050 123 45 67"])), .suggested(user(1, "70501234567")))
+    }
+
     private func record(id: String, phones: [String], tg: (Int64, String)? = nil) -> ContactRecord {
         let json: [String: Any] = [
             "identifier": id, "groupIds": [], "contactType": "person",

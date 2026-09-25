@@ -43,8 +43,7 @@ enum TelegramImport {
         case .givenName: return r.givenName
         case .familyName: return r.familyName
         case .phone:
-            let key = TelegramLink.phoneKey(source.user.phone)
-            if let key, let same = r.phoneNumbers.first(where: { TelegramLink.phoneKey($0.value) == key }) {
+            if let same = r.phoneNumbers.first(where: { TelegramLink.samePhone($0.value, source.user.phone) }) {
                 return same.value + " (уже есть)"
             }
             return r.phoneNumbers.map(\.value).joined(separator: ", ")
@@ -95,8 +94,7 @@ enum TelegramImport {
         if fields.contains(.givenName), !u.firstName.isEmpty { m.givenName = u.firstName }
         if fields.contains(.familyName) { m.familyName = u.lastName }
         if fields.contains(.phone), !u.phone.isEmpty {
-            let key = TelegramLink.phoneKey(u.phone)
-            if !existingPhones.contains(where: { TelegramLink.phoneKey($0) == key && key != nil }) {
+            if !existingPhones.contains(where: { TelegramLink.samePhone($0, u.phone) }) {
                 m.phoneNumbers = m.phoneNumbers + [CNLabeledValue(label: CNLabelPhoneNumberMobile,
                                                                   value: CNPhoneNumber(stringValue: u.phoneDisplay))]
             }

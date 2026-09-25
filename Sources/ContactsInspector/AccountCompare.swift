@@ -69,6 +69,12 @@ enum AccountCompare {
                 name.isEmpty ? [] : ["n:" + name],
             ]
         }
+        let bById = Dictionary(b.map { ($0.identifier, $0) }, uniquingKeysWith: { x, _ in x })
+        // ключ телефона — последние 10 цифр; кандидата по нему ещё проверяем с учётом кода страны
+        func fits(_ r: ContactRecord, _ candidate: String, level: Int) -> Bool {
+            guard level == 0, let other = bById[candidate] else { return true }
+            return r.phoneNumbers.contains { p in other.phoneNumbers.contains { TelegramLink.samePhone(p.value, $0.value) } }
+        }
         var result = Match()
         var usedB = Set<String>()
         var pairedA = Set<String>()
@@ -79,7 +85,7 @@ enum AccountCompare {
                 for k in keys(r)[level] { index[k, default: []].append(r.identifier) }
             }
             for r in a where !pairedA.contains(r.identifier) {
-                if let hit = keys(r)[level].lazy.compactMap({ index[$0]?.first { !usedB.contains($0) } }).first {
+                if let hit = keys(r)[level].lazy.compactMap({ index[$0]?.first { !usedB.contains($0) && fits(r, $0, level: level) } }).first {
                     result.pairs.append((r.identifier, hit))
                     usedB.insert(hit)
                     pairedA.insert(r.identifier)

@@ -35,6 +35,13 @@ final class AccountCompareTests: XCTestCase {
         XCTAssertEqual(m.onlyB, ["b4"])
     }
 
+    func testMatchRespectsCountryCode() {
+        let a = [record("ua", "Олена", phones: ["+380 50 123 45 67"])]
+        let b = [record("ru", "Ольга", phones: ["+7 050 123 45 67"]), record("ua2", "Olena", phones: ["380501234567"])]
+        let m = AccountCompare.match(a, b)
+        XCTAssertEqual(m.pairs.map { $0.b }, ["ua2"])
+    }
+
     func testDifferences() {
         let a = record("a", "Иван", "Петров", phones: ["+7 900 123-45-67"], emails: ["i@x.ru"], note: "n")
         let same = record("b", "Иван", "Петров", phones: ["8 (900) 123 45 67"], emails: ["I@X.ru"], note: "n")

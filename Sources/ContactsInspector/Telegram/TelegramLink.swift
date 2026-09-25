@@ -161,12 +161,27 @@ enum TelegramLink {
         return appleFirst != u.firstName || r.familyName != u.lastName
     }
 
-    /// Ключ для сравнения телефонов: последние 10 цифр; российская «8» в начале → «7».
+    /// Ключ для индекса телефонов: последние 10 цифр (номер без кода страны тоже должен находиться).
+    /// Равенство ключей — необходимое условие, само сравнение — samePhone.
     static func phoneKey(_ s: String) -> String? {
-        var digits = s.filter(\.isASCII).filter(\.isNumber)
-        if digits.count == 11, digits.hasPrefix("8") { digits = "7" + digits.dropFirst() }
+        let digits = phoneDigits(s)
         guard digits.count >= 10 else { return nil }
         return String(digits.suffix(10))
+    }
+
+    /// Один и тот же номер: ключи равны, а если у обоих есть код страны (больше 10 цифр) —
+    /// совпадают все цифры. Иначе +380 50 123-45-67 и +7 050 123-45-67 считались бы одним номером.
+    static func samePhone(_ a: String, _ b: String) -> Bool {
+        guard let ka = phoneKey(a), ka == phoneKey(b) else { return false }
+        let da = phoneDigits(a), db = phoneDigits(b)
+        return da.count <= 10 || db.count <= 10 || da == db
+    }
+
+    /// Цифры номера; российская «8» в начале 11-значного номера → «7».
+    private static func phoneDigits(_ s: String) -> String {
+        let digits = s.filter(\.isASCII).filter(\.isNumber)
+        if digits.count == 11, digits.hasPrefix("8") { return "7" + digits.dropFirst() }
+        return digits
     }
 }
 
@@ -209,8 +224,9 @@ struct TelegramMatcher {
         if let u = TelegramLink.brokenLinkIds(r).compactMap({ usersById[$0] }).first, appleByTelegramId[u.id] == nil {
             return .suggested(u)
         }
-        let candidates = Set(r.phoneNumbers.compactMap { TelegramLink.phoneKey($0.value) }
-            .flatMap { usersByPhone[$0] ?? [] })
+        let candidates = Set(r.phoneNumbers.flatMap { p in
+            (TelegramLink.phoneKey(p.value).flatMap { usersByPhone[$0] } ?? []).filter { TelegramLink.samePhone(p.value, $0.phone) }
+        })
         // предлагаем, только если кандидат однозначный и ещё ни с кем не связан
         if candidates.count == 1, let u = candidates.first, appleByTelegramId[u.id] == nil {
             return .suggested(u)
