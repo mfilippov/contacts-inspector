@@ -8,16 +8,19 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # для публикации релиза по тегу
+  contents: read
 
 jobs:
+  # Обычная сборка: тесты и .app без ключей Telegram (в приложении будет ручной ввод).
+  # Секретов у этого job нет вовсе — ни на пушах, ни на PR, ни при ручном запуске.
   build:
+    if: "!startsWith(github.ref, 'refs/tags/v')"
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Кэш пакетов SwiftPM: сборка TDLib весит ~360 МБ, не качаем её каждый раз
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/Library/Caches/org.swift.swiftpm
           key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
@@ -25,8 +28,48 @@ jobs:
 
       - name: Toolchain
         run: |
-          # самый свежий Xcode на раннере (Swift 6.1 из Xcode 16 не успевает проверить типы в UI)
-          XCODE=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          # самый свежий Xcode на раннере без бет (Swift 6.1 из Xcode 16 не успевает проверить типы в UI)
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$XCODE"
+          swift --version
+
+      - name: Tests
+        run: swift test
+
+      - name: Build app
+        run: ./build-app.sh
+
+      - name: Package
+        run: ditto -c -k --keepParent "build/Contacts Inspector.app" build/Contacts-Inspector.zip
+
+      # Артефакт (~100 МБ) — только при ручном запуске: квота хранилища Actions общая на аккаунт.
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: Contacts-Inspector
+          path: build/Contacts-Inspector.zip
+          retention-days: 3
+
+  # Релиз по тегу v*: ключи Telegram — секреты окружения `release`, а само окружение
+  # (Settings → Environments) пускает только теги v*. Право на запись в репозиторий — только здесь.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-26
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-
+
+      - name: Toolchain
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
           sudo xcode-select -s "$XCODE"
           swift --version
 
@@ -35,21 +78,19 @@ jobs:
 
       - name: Build app
         env:
-          # Settings → Secrets and variables → Actions
+          # Settings → Environments → release → Environment secrets
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-        run: ./build-app.sh
+        run: |
+          if [[ -z "$TELEGRAM_API_ID" || -z "$TELEGRAM_API_HASH" ]]; then
+            echo "Релиз без ключей Telegram: добавьте секреты в окружение release" >&2
+            exit 1
+          fi
+          ./build-app.sh
 
       - name: Package
         run: ditto -c -k --keepParent "build/Contacts Inspector.app" build/Contacts-Inspector.zip
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Contacts-Inspector
-          path: build/Contacts-Inspector.zip
-
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: build/Contacts-Inspector.zip

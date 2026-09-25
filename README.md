@@ -60,9 +60,11 @@ Debug build: `CONFIG=debug ./build-app.sh`. It writes an action log and includes
 (`DebugTools.swift`, enabled via `defaults write me.filippov.ContactsInspector debugTools -bool true`).
 The release build contains neither.
 
-**CI:** `.github/workflows/build.yml` runs the tests and builds the `.app` on every push to `master`.
-On a `v*` tag the zip is attached to a GitHub release (the tag sets the bundle version); on a manual run
-it is uploaded as an artifact. Keys come from the repository secrets `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+**CI:** `.github/workflows/build.yml` runs the tests and builds the `.app` without Telegram keys on every
+push to `master` and on pull requests (a manual run also uploads the zip as an artifact). A `v*` tag runs the
+`release` job instead: it builds with the keys and attaches the zip to a GitHub release (the tag sets the bundle
+version). The keys are secrets of the GitHub environment `release`, which only `v*` tags may use, so no other
+run — pushes, pull requests, manual runs, forks — ever receives them.
 
 ## Data
 
