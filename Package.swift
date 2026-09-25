@@ -5,7 +5,7 @@ let package = Package(
     name: "ContactsInspector",
     platforms: [.macOS(.v15)],
     dependencies: [
-        .package(url: "https://github.com/Swiftgram/TDLibKit", exact: "1.5.2-tdlib-1.8.67-738ae316"),
+        .package(url: "https://github.com/Swiftgram/TDLibKit", exact: "1.5.2-tdlib-1.8.67-ea97bcdd"),
     ],
     targets: [
         .executableTarget(
